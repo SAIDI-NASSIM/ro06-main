@@ -450,7 +450,7 @@ class ParallelGeneticTOP(GeneticTOP):
 def lire_instance_chao(nom_fichier):
     with open(nom_fichier, "r") as f:
         lignes = f.readlines()
-    n, m = map(int, lignes[0].split())
+    L, m = map(int, lignes[0].split())
     clients = []
     depot = None
     for i, ligne in enumerate(lignes[1:]):
@@ -459,7 +459,7 @@ def lire_instance_chao(nom_fichier):
             depot = Client(0, x, y, 0)
         else:
             clients.append(Client(i, x, y, profit))
-    L = 100  # Default time limit
+    # L = 100  # Default time limit
     return depot, clients, m, L
 
 def visualize_solution(solution, depot, clients, filename):
@@ -534,7 +534,7 @@ def compare_algorithms(depot, clients, m, L):
 
 def main():
     # Read instance
-    nom_fichier = "set_64_1/set_64_1_15.txt"
+    nom_fichier = "set_66_1/set_66_1_110.txt"
     depot, clients, m, L = lire_instance_chao(nom_fichier)
     
     # Compare algorithms and get results
