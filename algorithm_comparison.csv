@@ -1,0 +1,4 @@
+Algorithm,Execution Time (s),Memory Usage (MB),Total Profit,Number of Routes,Total Clients Served
+Basic Heuristic,0.015625476837158203,0.00304412841796875,1135.0,1,35
+Beasley Adapted,0.0017249584197998047,0.008569717407226562,15.0,1,2
+Genetic Algorithm,4.215947151184082,0.7746191024780273,250.0,1,8

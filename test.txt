@@ -1,0 +1,282 @@
+class GeneticTOP:
+    def __init__(self, depot, clients, m: int, L: float, 
+                 population_size: int = 100,
+                 generations: int = 100,
+                 mutation_rate: float = 0.1,
+                 elite_size: int = 10):
+        self.depot = depot
+        self.clients = clients
+        self.m = m
+        self.L = L
+        self.population_size = population_size
+        self.generations = generations
+        self.mutation_rate = mutation_rate
+        self.elite_size = elite_size
+        self.best_solution = None
+        self.best_fitness = float('-inf')
+        
+    def create_initial_population(self):
+        population = []
+        for _ in range(self.population_size):
+            available_clients = self.clients.copy()
+            solution = []
+            
+            for _ in range(self.m):
+                if not available_clients:
+                    break
+                    
+                route = [self.depot]
+                current_time = 0
+                
+                while available_clients:
+                    client = random.choice(available_clients)
+                    new_time = (current_time + 
+                              distance(route[-1], client) + 
+                              distance(client, self.depot))
+                    
+                    if new_time <= self.L:
+                        route.append(client)
+                        current_time = new_time
+                        available_clients.remove(client)
+                    else:
+                        break
+                        
+                if len(route) > 1:
+                    route.append(self.depot)
+                    solution.append(route)
+                    
+            population.append(solution)
+        return population
+
+    def fitness(self, solution):
+        total_profit = 0
+        for route in solution:
+            if not self._is_route_valid(route):
+                return float('-inf')
+            total_profit += profit_total(route)
+        return total_profit
+    
+    def _is_route_valid(self, route):
+        if not route or route[0] != self.depot or route[-1] != self.depot:
+            return False
+        return temps_total(route) <= self.L
+
+    def selection(self, population):
+        tournament_size = 3
+        selected = []
+        
+        sorted_population = sorted(population, 
+                                 key=lambda x: self.fitness(x), 
+                                 reverse=True)
+        selected.extend(copy.deepcopy(sorted_population[:self.elite_size]))
+        
+        while len(selected) < self.population_size:
+            tournament = random.sample(population, tournament_size)
+            winner = max(tournament, key=lambda x: self.fitness(x))
+            selected.append(copy.deepcopy(winner))
+            
+        return selected
+
+    def crossover(self, parent1, parent2):
+        if not parent1 or not parent2:
+            return parent1, parent2
+            
+        child1 = []
+        child2 = []
+        
+        for route in parent1:
+            if random.random() < 0.5:
+                child1.append(copy.deepcopy(route))
+                
+        for route in parent2:
+            if random.random() < 0.5:
+                child2.append(copy.deepcopy(route))
+                
+        used_clients1 = {client.id for route in child1 
+                        for client in route[1:-1]}
+        used_clients2 = {client.id for route in child2 
+                        for client in route[1:-1]}
+        
+        available_clients1 = [client for client in self.clients 
+                            if client.id not in used_clients1]
+        available_clients2 = [client for client in self.clients 
+                            if client.id not in used_clients2]
+        
+        while available_clients1 and len(child1) < self.m:
+            route = self._create_random_route(available_clients1)
+            if route:
+                child1.append(route)
+                used_clients = {client.id for client in route[1:-1]}
+                available_clients1 = [client for client in available_clients1 
+                                    if client.id not in used_clients]
+                
+        while available_clients2 and len(child2) < self.m:
+            route = self._create_random_route(available_clients2)
+            if route:
+                child2.append(route)
+                used_clients = {client.id for client in route[1:-1]}
+                available_clients2 = [client for client in available_clients2 
+                                    if client.id not in used_clients]
+                
+        return child1, child2
+
+    def _create_random_route(self, available_clients):
+        if not available_clients:
+            return None
+            
+        route = [self.depot]
+        current_time = 0
+        clients_copy = available_clients.copy()
+        
+        while clients_copy:
+            client = random.choice(clients_copy)
+            new_time = (current_time + 
+                       distance(route[-1], client) + 
+                       distance(client, self.depot))
+            
+            if new_time <= self.L:
+                route.append(client)
+                current_time = new_time
+                clients_copy.remove(client)
+            else:
+                break
+                
+        if len(route) > 1:
+            route.append(self.depot)
+            return route
+        return None
+    
+    def mutation(self, solution: List[List[Client]]) -> List[List[Client]]:
+            if random.random() > self.mutation_rate:
+                return solution
+                
+            mutated = copy.deepcopy(solution)
+            
+            # Choisir aléatoirement une opération de mutation
+            mutation_ops = ['swap', 'insert', 'reverse']
+            operation = random.choice(mutation_ops)
+            
+            if operation == 'swap':
+                # Échanger deux clients aléatoires
+                if len(mutated) >= 2:
+                    route_idx1 = random.randint(0, len(mutated)-1)
+                    route_idx2 = random.randint(0, len(mutated)-1)
+                    
+                    if (len(mutated[route_idx1]) > 2 and 
+                        len(mutated[route_idx2]) > 2):
+                        pos1 = random.randint(1, len(mutated[route_idx1])-2)
+                        pos2 = random.randint(1, len(mutated[route_idx2])-2)
+                        
+                        (mutated[route_idx1][pos1], 
+                        mutated[route_idx2][pos2]) = (mutated[route_idx2][pos2], 
+                                                    mutated[route_idx1][pos1])
+                        
+            elif operation == 'insert':
+                # Déplacer un client vers une nouvelle position
+                if mutated:
+                    route_idx = random.randint(0, len(mutated)-1)
+                    if len(mutated[route_idx]) > 3:
+                        pos1 = random.randint(1, len(mutated[route_idx])-2)
+                        pos2 = random.randint(1, len(mutated[route_idx])-2)
+                        client = mutated[route_idx].pop(pos1)
+                        mutated[route_idx].insert(pos2, client)
+                        
+            else:  # reverse
+                # Inverser une sous-séquence dans une route
+                if mutated:
+                    route_idx = random.randint(0, len(mutated)-1)
+                    if len(mutated[route_idx]) > 3:
+                        pos1 = random.randint(1, len(mutated[route_idx])-3)
+                        pos2 = random.randint(pos1+1, len(mutated[route_idx])-2)
+                        mutated[route_idx][pos1:pos2+1] = (
+                            mutated[route_idx][pos1:pos2+1][::-1]
+                        )
+                        
+            return mutated
+
+    def evolve(self) -> List[List[Client]]:
+        population = self.create_initial_population()
+        
+        for generation in range(self.generations):
+            # Sélection
+            new_population = self.selection(population)
+            
+            # Crossover
+            offspring = []
+            for i in range(0, len(new_population)-1, 2):
+                child1, child2 = self.crossover(new_population[i], 
+                                              new_population[i+1])
+                offspring.extend([child1, child2])
+            
+            # Mutation
+            offspring = [self.mutation(sol) for sol in offspring]
+            
+            # Mise à jour de la population
+            population = offspring
+            
+            # Mise à jour de la meilleure solution
+            current_best = max(population, key=self.fitness)
+            current_fitness = self.fitness(current_best)
+            
+            if current_fitness > self.best_fitness:
+                self.best_fitness = current_fitness
+                self.best_solution = copy.deepcopy(current_best)
+                
+            if generation % 10 == 0:
+                print(f"Generation {generation}: Best Fitness = {self.best_fitness}")
+                
+        return self.best_solution
+
+class ParallelGeneticTOP(GeneticTOP):
+    def __init__(self, *args, n_processes=4, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.n_processes = n_processes
+        
+    def parallel_fitness(self, solutions):
+        with Pool(self.n_processes) as pool:
+            return pool.map(self.fitness, solutions)
+            
+    def evolve(self) -> List[List[Client]]:
+        population = self.create_initial_population()
+        
+        for generation in range(self.generations):
+            # Sélection avec fitness parallèle
+            fitness_values = self.parallel_fitness(population)
+            population_with_fitness = list(zip(population, fitness_values))
+            sorted_population = sorted(population_with_fitness, 
+                                    key=lambda x: x[1], 
+                                    reverse=True)
+            
+            new_population = [sol for sol, _ in sorted_population[:self.elite_size]]
+            
+            while len(new_population) < self.population_size:
+                tournament = random.sample(population_with_fitness, 3)
+                winner = max(tournament, key=lambda x: x[1])[0]
+                new_population.append(copy.deepcopy(winner))
+            
+            # Crossover et mutation
+            offspring = []
+            for i in range(0, len(new_population)-1, 2):
+                child1, child2 = self.crossover(new_population[i], 
+                                              new_population[i+1])
+                offspring.extend([child1, child2])
+            
+            # Mutation parallèle
+            with Pool(self.n_processes) as pool:
+                offspring = pool.map(self.mutation, offspring)
+            
+            # Mise à jour de la population
+            population = offspring
+            
+            # Mise à jour de la meilleure solution
+            current_best = max(population, key=self.fitness)
+            current_fitness = self.fitness(current_best)
+            
+            if current_fitness > self.best_fitness:
+                self.best_fitness = current_fitness
+                self.best_solution = copy.deepcopy(current_best)
+                
+            if generation % 10 == 0:
+                print(f"Generation {generation}: Best Fitness = {self.best_fitness}")
+                
+        return self.best_solution
