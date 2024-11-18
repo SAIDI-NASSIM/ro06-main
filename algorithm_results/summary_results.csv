@@ -1,0 +1,3 @@
+Algorithm,Execution Time,Final Fitness,Total Profit,Total Clients,Routes
+AntColonyTOP,0.4166297912597656,5.692645828131538,535.0,19,1
+GeneticTOP,9.657769918441772,369.783287690428,360.0,14,1
