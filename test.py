@@ -12,6 +12,7 @@ import itertools
 from dataclasses import dataclass
 from typing import List, Set, Dict, Tuple
 import os 
+import glob
 
 
 class Client:
@@ -37,6 +38,455 @@ def profit_incremental(route, client, position):
     return client.profit - cout_additionnel
 
 
+
+class GreedyTOP:
+    def __init__(self, start_point, end_point, clients, m, L, debug=False):
+        self.start_point = start_point
+        self.end_point = end_point
+        self.clients = clients
+        self.m = m
+        self.L = L
+        self.debug = debug
+        
+        # Solution tracking
+        self.best_solution = None
+        self.best_fitness = float('-inf')
+        
+        # Precompute distances for efficiency
+        self.distances = self._precompute_distances()
+        
+        # Statistics collection (for consistency with other algorithms)
+        self.stats_data = {
+            'iteration': [0],
+            'best_fitness': [0],
+            'avg_fitness': [0],
+            'diversity': [0]
+        }
+    
+    def _precompute_distances(self):
+        """Precompute distances between all points for efficiency."""
+        distances = {}
+        all_points = [self.start_point] + self.clients + [self.end_point]
+        for i, p1 in enumerate(all_points):
+            for p2 in all_points[i+1:]:
+                dist = math.sqrt((p1.x - p2.x)**2 + (p1.y - p2.y)**2)
+                distances[(p1.id, p2.id)] = distances[(p2.id, p1.id)] = dist
+        return distances
+    
+    def get_distance(self, client1, client2):
+        """Get precomputed distance between two clients."""
+        return self.distances[(client1.id, client2.id)]
+    
+    def _calculate_score(self, current_client, candidate_client, current_time):
+        """Calculate score for a candidate client based on multiple factors."""
+        distance_to_candidate = self.get_distance(current_client, candidate_client)
+        distance_to_end = self.get_distance(candidate_client, self.end_point)
+        
+        # Skip if adding this client would exceed time limit
+        if current_time + distance_to_candidate + distance_to_end > self.L:
+            return float('-inf')
+        
+        # Score based on profit per unit time with diminishing returns for longer routes
+        time_factor = 1 - (current_time / self.L)
+        profit_per_distance = candidate_client.profit / (distance_to_candidate + 0.1)
+        
+        # Penalty for getting too close to time limit
+        time_remaining = self.L - (current_time + distance_to_candidate)
+        time_buffer_penalty = 1 - (0.5 * (1 - time_remaining / self.L))
+        
+        # Consider path to end point
+        end_accessibility = 1 / (1 + distance_to_end)
+        
+        return profit_per_distance * time_factor * time_buffer_penalty * end_accessibility
+    
+    def _construct_route(self, available_clients):
+        """Construct a single route using greedy approach."""
+        if not available_clients:
+            return [self.start_point, self.end_point]
+        
+        route = [self.start_point]
+        current_time = 0
+        current = self.start_point
+        local_available = available_clients.copy()
+        
+        while local_available:
+            best_score = float('-inf')
+            best_next = None
+            
+            # Evaluate all remaining clients
+            for client in local_available:
+                score = self._calculate_score(current, client, current_time)
+                if score > best_score:
+                    best_score = score
+                    best_next = client
+            
+            # If no valid next client found, end route
+            if best_score == float('-inf'):
+                break
+            
+            # Add best client to route
+            route.append(best_next)
+            current_time += self.get_distance(current, best_next)
+            current = best_next
+            local_available.remove(best_next)
+        
+        route.append(self.end_point)
+        return route if len(route) > 2 else [self.start_point, self.end_point]
+    
+    def _calculate_solution_quality(self, solution):
+        """Calculate solution quality considering profits and time constraints."""
+        if not solution:
+            return 0
+        
+        total_profit = sum(sum(c.profit for c in route[1:-1]) for route in solution)
+        total_time = sum(sum(self.get_distance(route[i], route[i+1]) 
+                        for i in range(len(route)-1)) for route in solution)
+        
+        if total_time > self.L:
+            return 0
+        
+        # Quality score considers both profit and time efficiency
+        time_efficiency = 1 - (total_time / (self.L * self.m))
+        coverage_ratio = sum(len(route)-2 for route in solution) / len(self.clients)
+        
+        return total_profit * (1 + 0.1 * time_efficiency) * (1 + 0.1 * coverage_ratio)
+    
+    def solve(self):
+        """Main solving method using greedy approach."""
+        solution = []
+        available_clients = set(self.clients)
+        
+        # Construct routes while clients remain and routes available
+        for _ in range(self.m):
+            if not available_clients:
+                break
+            
+            route = self._construct_route(available_clients)
+            if len(route) > 2:
+                solution.append(route)
+                # Remove used clients
+                available_clients -= set(route[1:-1])
+        
+        # Calculate solution quality
+        solution_quality = self._calculate_solution_quality(solution)
+        
+        # Update best solution if improved
+        if solution_quality > self.best_fitness:
+            self.best_fitness = solution_quality
+            self.best_solution = solution
+        
+        # Update stats for consistency with other algorithms
+        self.stats_data['best_fitness'] = [self.best_fitness]
+        self.stats_data['avg_fitness'] = [self.best_fitness]
+        
+        if self.debug:
+            print(f"\nGreedy Solution Quality: {self.best_fitness:.2f}")
+            print(f"Total Clients Served: {sum(len(route)-2 for route in solution)}")
+            print(f"Number of Routes: {len(solution)}")
+        
+        return self.best_solution
+    
+    def get_stats(self):
+        """Return collected statistics as a pandas DataFrame."""
+        return pd.DataFrame(self.stats_data)
+    
+###################################################################################################################################################
+class SimulatedAnnealingTOP:
+    def __init__(self, start_point, end_point, clients, m, L, debug=False):
+        self.start_point = start_point
+        self.end_point = end_point
+        self.clients = clients
+        self.m = m
+        self.L = L
+        self.debug = debug
+        
+        n = len(clients)
+        # Temperature parameters
+        self.initial_temp = 100.0
+        self.final_temp = 0.01
+        self.cooling_rate = 0.97
+        self.iterations_per_temp = min(100, n * 2)
+        self.max_iterations = min(500, n * 10)
+        
+        # Solution tracking
+        self.best_solution = None
+        self.best_fitness = float('-inf')
+        self.current_solution = None
+        self.current_fitness = float('-inf')
+        
+        # Precompute distances for efficiency
+        self.distances = self._precompute_distances()
+        
+        # Statistics collection
+        self.stats_data = {
+            'iteration': [],
+            'best_fitness': [],
+            'avg_fitness': [],
+            'diversity': [],
+            'temperature': [],
+            'acceptance_rate': [],
+            'iterations_without_improvement': []
+        }
+        
+        # Performance tracking
+        self.iterations_without_improvement = 0
+        self.max_stagnation = max(100, n // 2)
+        self.accepted_moves = 0
+        self.total_moves = 0
+        
+    def _precompute_distances(self):
+        """Precompute distances between all points for efficiency."""
+        distances = {}
+        all_points = [self.start_point] + self.clients + [self.end_point]
+        for i, p1 in enumerate(all_points):
+            for p2 in all_points[i+1:]:
+                dist = math.sqrt((p1.x - p2.x)**2 + (p1.y - p2.y)**2)
+                distances[(p1.id, p2.id)] = distances[(p2.id, p1.id)] = dist
+        return distances
+    
+    def get_distance(self, client1, client2):
+        """Get precomputed distance between two clients."""
+        return self.distances[(client1.id, client2.id)]
+    
+    def _create_initial_solution(self):
+        """Create initial solution using greedy approach with randomization."""
+        solution = []
+        available_clients = set(self.clients)
+        
+        for _ in range(self.m):
+            if not available_clients:
+                break
+                
+            route = [self.start_point]
+            current_time = 0
+            
+            while available_clients:
+                candidates = []
+                for client in available_clients:
+                    new_time = (current_time + 
+                              self.get_distance(route[-1], client) + 
+                              self.get_distance(client, self.end_point))
+                    if new_time <= self.L:
+                        score = client.profit / (self.get_distance(route[-1], client) + 0.1)
+                        candidates.append((client, score))
+                
+                if not candidates:
+                    break
+                
+                # Select client with probability proportional to score
+                total_score = sum(score for _, score in candidates)
+                if total_score <= 0:
+                    break
+                    
+                r = random.random() * total_score
+                cumsum = 0
+                selected = None
+                
+                for client, score in candidates:
+                    cumsum += score
+                    if cumsum >= r:
+                        selected = client
+                        break
+                
+                if not selected:
+                    selected = candidates[-1][0]
+                
+                route.append(selected)
+                available_clients.remove(selected)
+                current_time += self.get_distance(route[-2], selected)
+            
+            route.append(self.end_point)
+            if len(route) > 2:
+                solution.append(route)
+        
+        return solution
+
+    def _calculate_solution_quality(self, solution):
+        """Calculate solution quality with penalties and bonuses."""
+        if not solution:
+            return 0
+        
+        total_profit = sum(sum(c.profit for c in route[1:-1]) for route in solution)
+        
+        # Time constraint penalty
+        total_time = sum(sum(self.get_distance(route[i], route[i+1]) 
+                        for i in range(len(route)-1)) for route in solution)
+        time_penalty = 0
+        if total_time > self.L:
+            excess = total_time - self.L
+            time_penalty = (excess * 2) + (excess ** 2)
+        
+        # Route balance penalty
+        route_profits = [sum(c.profit for c in route[1:-1]) for route in solution]
+        if route_profits:
+            profit_std = statistics.stdev(route_profits) if len(route_profits) > 1 else 0
+            balance_penalty = profit_std * 0.2
+        else:
+            balance_penalty = 0
+        
+        # Coverage bonus
+        total_clients = sum(len(route)-2 for route in solution)
+        coverage_ratio = total_clients / len(self.clients)
+        coverage_bonus = total_profit * coverage_ratio * 0.1
+        
+        return max(0, total_profit - time_penalty - balance_penalty + coverage_bonus)
+    
+    def _generate_neighbor(self, solution):
+        """Generate neighboring solution using various operators."""
+        neighbor = copy.deepcopy(solution)
+        if not neighbor:
+            return neighbor
+            
+        # Select random operation
+        operation = random.choice(['swap', 'insert', 'reverse', 'exchange'])
+        
+        if operation == 'swap':
+            # Swap two random clients within a route
+            route_idx = random.randrange(len(neighbor))
+            route = neighbor[route_idx]
+            if len(route) > 3:
+                i, j = random.sample(range(1, len(route)-1), 2)
+                route[i], route[j] = route[j], route[i]
+        
+        elif operation == 'insert':
+            # Move a client to a new position
+            if len(neighbor) > 1:
+                route1_idx = random.randrange(len(neighbor))
+                route1 = neighbor[route1_idx]
+                if len(route1) > 3:
+                    client_idx = random.randrange(1, len(route1)-1)
+                    client = route1.pop(client_idx)
+                    
+                    route2_idx = random.randrange(len(neighbor))
+                    route2 = neighbor[route2_idx]
+                    insert_pos = random.randrange(1, len(route2))
+                    route2.insert(insert_pos, client)
+        
+        elif operation == 'reverse':
+            # Reverse a segment within a route
+            route_idx = random.randrange(len(neighbor))
+            route = neighbor[route_idx]
+            if len(route) > 4:
+                i = random.randrange(1, len(route)-2)
+                j = random.randrange(i+1, len(route)-1)
+                route[i:j+1] = reversed(route[i:j+1])
+        
+        else:  # exchange
+            # Exchange segments between routes
+            if len(neighbor) > 1:
+                i, j = random.sample(range(len(neighbor)), 2)
+                route1, route2 = neighbor[i], neighbor[j]
+                if len(route1) > 3 and len(route2) > 3:
+                    pos1 = random.randrange(1, len(route1)-1)
+                    pos2 = random.randrange(1, len(route2)-1)
+                    route1[pos1], route2[pos2] = route2[pos2], route1[pos1]
+        
+        return neighbor
+    
+    def _calculate_acceptance_probability(self, current_fitness, new_fitness, temperature):
+        """Calculate probability of accepting worse solution."""
+        if new_fitness > current_fitness:
+            return 1.0
+        return math.exp((new_fitness - current_fitness) / temperature)
+    
+    def _calculate_diversity_metric(self, solution1, solution2):
+        """Calculate diversity between two solutions."""
+        if not solution1 or not solution2:
+            return 1.0
+            
+        clients1 = set(c.id for route in solution1 for c in route[1:-1])
+        clients2 = set(c.id for route in solution2 for c in route[1:-1])
+        
+        if not clients1 and not clients2:
+            return 0.0
+            
+        intersection = len(clients1.intersection(clients2))
+        union = len(clients1.union(clients2))
+        
+        return 1.0 - (intersection / union if union > 0 else 0)
+    
+    def solve(self):
+        """Main simulated annealing algorithm."""
+        # Initialize solution
+        self.current_solution = self._create_initial_solution()
+        self.current_fitness = self._calculate_solution_quality(self.current_solution)
+        self.best_solution = copy.deepcopy(self.current_solution)
+        self.best_fitness = self.current_fitness
+        
+        temperature = self.initial_temp
+        iteration = 0
+        
+        while temperature > self.final_temp and iteration < self.max_iterations:
+            accepted_at_temp = 0
+            
+            for _ in range(self.iterations_per_temp):
+                # Generate and evaluate neighbor
+                neighbor = self._generate_neighbor(self.current_solution)
+                neighbor_fitness = self._calculate_solution_quality(neighbor)
+                
+                # Calculate acceptance probability
+                acceptance_prob = self._calculate_acceptance_probability(
+                    self.current_fitness, neighbor_fitness, temperature)
+                
+                self.total_moves += 1
+                
+                # Accept or reject neighbor
+                if random.random() < acceptance_prob:
+                    self.current_solution = neighbor
+                    self.current_fitness = neighbor_fitness
+                    accepted_at_temp += 1
+                    self.accepted_moves += 1
+                    
+                    # Update best solution
+                    if neighbor_fitness > self.best_fitness:
+                        self.best_solution = copy.deepcopy(neighbor)
+                        self.best_fitness = neighbor_fitness
+                        self.iterations_without_improvement = 0
+                    else:
+                        self.iterations_without_improvement += 1
+                
+                # Collect statistics
+                self.stats_data['iteration'].append(iteration)
+                self.stats_data['best_fitness'].append(self.best_fitness)
+                self.stats_data['avg_fitness'].append(self.current_fitness)
+                self.stats_data['temperature'].append(temperature)
+                self.stats_data['acceptance_rate'].append(self.accepted_moves / max(1, self.total_moves))
+                self.stats_data['iterations_without_improvement'].append(self.iterations_without_improvement)
+                
+                if self.current_solution and self.best_solution:
+                    diversity = self._calculate_diversity_metric(
+                        self.current_solution, self.best_solution)
+                    self.stats_data['diversity'].append(diversity)
+                else:
+                    self.stats_data['diversity'].append(0)
+                
+                # Debug output
+                if self.debug and iteration % 10 == 0:
+                    print(f"\nIteration {iteration}:")
+                    print(f"  Temperature: {temperature:.2f}")
+                    print(f"  Best Fitness: {self.best_fitness:.2f}")
+                    print(f"  Current Fitness: {self.current_fitness:.2f}")
+                    print(f"  Acceptance Rate: {self.accepted_moves/max(1, self.total_moves):.3f}")
+                
+                iteration += 1
+                
+                # Early stopping check
+                if (self.iterations_without_improvement > self.max_stagnation and
+                    iteration > self.max_iterations // 4):
+                    if self.debug:
+                        print(f"\nEarly stopping at iteration {iteration}")
+                        print(f"No improvement for {self.iterations_without_improvement} iterations")
+                    return self.best_solution
+            
+            # Cool down
+            temperature *= self.cooling_rate
+        
+        return self.best_solution
+    
+    def get_stats(self):
+        """Return collected statistics as a pandas DataFrame."""
+        return pd.DataFrame(self.stats_data)
+#######################################################################################################################################################
 class AntColonyTOP:
     def __init__(self, start_point, end_point, clients, m, L, debug=False):
         self.start_point = start_point
@@ -870,6 +1320,8 @@ def main(instance_file, debug=False):
     
     # Run algorithms and collect results
     algorithms = [
+        ('GreedyTOP', GreedyTOP(start_point, end_point, clients, m, L, debug=debug)),
+        ('SimulatedAnnealingTOP', SimulatedAnnealingTOP(start_point, end_point, clients, m, L, debug=debug)),
         ('AntColonyTOP', AntColonyTOP(start_point, end_point, clients, m, L, debug=debug)),
         ('GeneticTOP', GeneticTOP(start_point, end_point, clients, m, L, debug=debug))
     ]
@@ -930,6 +1382,15 @@ def main(instance_file, debug=False):
     print(results_df)
     print(f"\nResults appended to {history_file}")
 
+def main_for_all_instances(folder_pattern, debug=False):
+        instance_files = glob.glob(folder_pattern)
+        for instance_file in instance_files:
+            main(instance_file, debug)
+
 if __name__ == "__main__":
-    instance_file = "set_66_1/set_66_1_100.txt"
-    main(instance_file, debug=True)
+        # main_for_all_instances("set_64_1/*.txt", debug=True)
+        # main_for_all_instances("set_66_1/*.txt", debug=True)
+        main_for_all_instances("teste/*.txt", debug=True)
+
+
+
