@@ -36,651 +36,186 @@ def profit_incremental(route, client, position):
     cout_additionnel = (distance(route[position - 1], client) + distance(client, route[position]) - distance(route[position - 1], route[position]))
     return client.profit - cout_additionnel
 
+
 class AntColonyTOP:
-    def __init__(self, start_point, end_point, clients, m: int, L: float, debug=False):
+    def __init__(self, start_point, end_point, clients, m, L, debug=False):
         self.start_point = start_point
         self.end_point = end_point
         self.clients = clients
-        self.m = m  # number of routes
-        self.L = L  # time limit
+        self.m = m
+        self.L = L
         self.debug = debug
-        
-        # Problem size dependent parameters
         n = len(clients)
-        self.n_ants = min(50, n * 2)  # number of ants scales with problem size
-        self.max_iterations = min(200, n * 5)
-        
-        # ACO parameters
-        self.alpha = 1.0  # pheromone importance
-        self.beta = 2.0   # heuristic information importance
-        self.rho = 0.1    # evaporation rate
-        self.Q = 100.0    # pheromone deposit factor
-        
-        # Initialize pheromone matrix
-        self.tau = {}
-        for i in [self.start_point] + clients + [self.end_point]:
-            self.tau[i] = {}
-            for j in [self.start_point] + clients + [self.end_point]:
-                if i != j:
-                    self.tau[i][j] = 1.0
-
-        # Initialize heuristic information (eta)
-        self.eta = {}
-        for i in [self.start_point] + clients + [self.end_point]:
-            self.eta[i] = {}
-            for j in [self.start_point] + clients + [self.end_point]:
-                if i != j:
-                    dist = distance(i, j)
-                    # Combine distance and profit in heuristic
-                    profit = j.profit if j != self.start_point and j != self.end_point else 0
-                    self.eta[i][j] = (1.0 + profit) / dist if dist > 0 else 1.0
-
-        # Dynamic parameters
-        self.local_search_freq = max(1, self.max_iterations // 10)
-        self.diversification_factor = 0.0
-
-        # Statistics tracking
-        self.best_solution = None
-        self.best_fitness = float('-inf')
-        self.iterations_without_improvement = 0
-        self.max_stagnation = 20
-        
-        # Statistics collection
-        self.stats_data = {
-            'iteration': [],
-            'best_fitness': [],
-            'avg_fitness': [],
-            'diversity': [],
-            'pheromone_avg': [],
-            'pheromone_max': [],
-            'pheromone_min': [],
-            'alpha': [],
-            'beta': [],
-            'rho': []
-        }
-
-    def is_valid_route(self, route):
-        if not route or len(route) < 2:
-            return False
-        if route[0] != self.start_point or route[-1] != self.end_point:
-            return False
-        if len(set(c.id for c in route[1:-1])) != len(route[1:-1]):
-            return False
-        total_time = sum(distance(route[i], route[i+1]) for i in range(len(route)-1))
-        return total_time <= self.L
-
-    def _select_next_client(self, ant_route, current, available_clients):
-        if not available_clients:
-            return self.end_point
-
-        # Calculate remaining time
-        current_time = sum(distance(ant_route[i], ant_route[i+1]) 
-                         for i in range(len(ant_route)-1))
-        
-        # Filter feasible clients
-        feasible = []
-        for client in available_clients:
-            time_to_client = distance(current, client)
-            time_to_end = distance(client, self.end_point)
-            temp_route = ant_route + [client, self.end_point]
-            if (current_time + time_to_client + time_to_end <= self.L and 
-                len(set(c.id for c in temp_route[1:-1])) == len(temp_route[1:-1])):
-                feasible.append(client)
-        
-        if not feasible:
-            return self.end_point
-
-        # Calculate selection probabilities
-        total = 0.0
-        probabilities = {}
-        
-        for client in feasible:
-            # Include diversification factor in probability calculation
-            prob = ((self.tau[current][client] + self.diversification_factor) ** self.alpha * 
-                   self.eta[current][client] ** self.beta)
-            probabilities[client] = prob
-            total += prob
-
-        if total == 0.0:
-            return random.choice(feasible)
-
-        # Roulette wheel selection
-        r = random.random() * total
-        curr_sum = 0.0
-        for client in feasible:
-            curr_sum += probabilities[client]
-            if curr_sum >= r:
-                return client
-        
-        return feasible[-1]
-
-    def _construct_route(self, available_clients):
-        route = [self.start_point]
-        current = self.start_point
-        local_available = available_clients.copy()
-        
-        while local_available:
-            next_client = self._select_next_client(route, current, local_available)
-            if next_client != self.end_point:
-                test_route = route + [next_client, self.end_point]
-                if not self.is_valid_route(test_route):
-                    next_client = self.end_point
-            if next_client == self.end_point:
-                break
-            route.append(next_client)
-            current = next_client
-            local_available.remove(next_client)
-        
-        route.append(self.end_point)
-        return route
-
-    def _construct_solution(self):
-        available_clients = set(self.clients)
-        solution = []
-        
-        for _ in range(self.m):
-            if not available_clients:
-                break
-            route = self._construct_route(available_clients)
-            if len(route) > 2:  # Only add non-empty routes
-                solution.append(route)
-                available_clients -= set(route[1:-1])
-        
-        return solution
-
-    def _local_search(self, solution):
-        improved = True
-        while improved:
-            improved = False
-            
-            # 2-opt improvement for each route
-            for i, route in enumerate(solution):
-                if len(route) <= 4:  # Need at least 2 clients for 2-opt
-                    continue
-                    
-                for j in range(1, len(route)-2):
-                    for k in range(j+1, len(route)-1):
-                        new_route = route[:j] + list(reversed(route[j:k+1])) + route[k+1:]
-                        if self.is_valid_route(new_route):
-                            if (temps_total(new_route) <= self.L and 
-                                profit_total(new_route) > profit_total(route)):
-                                solution[i] = new_route
-                                improved = True
-            
-            # Inter-route client exchange
-            for i in range(len(solution)):
-                for j in range(i+1, len(solution)):
-                    for pos1 in range(1, len(solution[i])-1):
-                        for pos2 in range(1, len(solution[j])-1):
-                            new_route1 = (solution[i][:pos1] + 
-                                        [solution[j][pos2]] + 
-                                        solution[i][pos1+1:])
-                            new_route2 = (solution[j][:pos2] + 
-                                        [solution[i][pos1]] + 
-                                        solution[j][pos2+1:])
-                            
-                            if (self.is_valid_route(new_route1) and
-                                self.is_valid_route(new_route2)):
-                                old_profit = profit_total(solution[i]) + profit_total(solution[j])
-                                new_profit = profit_total(new_route1) + profit_total(new_route2)
-                                if new_profit > old_profit:
-                                    solution[i] = new_route1
-                                    solution[j] = new_route2
-                                    improved = True
-        
-        return solution
-
-    def _update_pheromones(self, solutions, solution_qualities):
-        # Evaporation
-        for i in self.tau:
-            for j in self.tau[i]:
-                self.tau[i][j] *= (1 - self.rho)
-
-        # Deposit new pheromones
-        for solution, quality in zip(solutions, solution_qualities):
-            deposit = self.Q * quality
-            for route in solution:
-                for i in range(len(route)-1):
-                    self.tau[route[i]][route[i+1]] += deposit
-                    self.tau[route[i+1]][route[i]] += deposit  # Symmetric deposit
-
-    def _calculate_solution_quality(self, solution):
-        if not solution:
-            return 0
-        
-        total_profit = sum(profit_total(route) for route in solution)
-        total_time = sum(temps_total(route) for route in solution)
-        
-        # Penalize solutions that violate time constraints
-        if any(temps_total(route) > self.L for route in solution):
-            return 0
-        
-        # Calculate coverage ratio
-        served_clients = len({c.id for route in solution for c in route[1:-1]})
-        coverage_ratio = served_clients / len(self.clients)
-        
-        # Calculate route balance factor
-        route_lengths = [len(route) - 2 for route in solution]
-        length_variance = np.var(route_lengths) if route_lengths else 0
-        balance_factor = 1 + 0.2 * (1 / (1 + length_variance))
-        
-        # Combine factors
-        quality = (total_profit * 
-                  (1 + 0.3 * coverage_ratio) * 
-                  balance_factor * 
-                  (1 - total_time / (self.m * self.L)))
-        
-        return quality
-
-    def _calculate_diversity(self, solutions):
-        if not solutions:
-            return 0
-        
-        diversity_sum = 0
-        comparisons = 0
-        
-        for i in range(len(solutions)):
-            for j in range(i + 1, len(solutions)):
-                sol1_clients = {c.id for route in solutions[i] for c in route[1:-1]}
-                sol2_clients = {c.id for route in solutions[j] for c in route[1:-1]}
-                
-                if sol1_clients or sol2_clients:
-                    jaccard = len(sol1_clients & sol2_clients) / len(sol1_clients | sol2_clients)
-                    diversity_sum += 1 - jaccard
-                    comparisons += 1
-        
-        return diversity_sum / max(1, comparisons)
-
-
-    def solve(self):
-        # Initialize elite solutions archive
-        elite_solutions = []
-        elite_size = 3
-        stagnation_counter = 0
-        last_improvement = 0
-        
-        # Adaptive parameters
-        min_alpha = 0.5
-        max_alpha = 3.0
-        min_beta = 1.0
-        max_beta = 4.0
-        
-        # Initialize pheromone bounds
-        tau_max = 5.0
-        tau_min = 0.01
-        
-        for iteration in range(self.max_iterations):
-            solutions = []
-            qualities = []
-            
-            # Adjust parameters based on stagnation
-            if stagnation_counter > 10:
-                # Increase exploration
-                self.alpha = max(min_alpha, self.alpha * 0.9)
-                self.beta = min(max_beta, self.beta * 1.1)
-                self.rho = min(0.3, self.rho * 1.1)  # Increase evaporation
-                # Reset pheromone levels partially
-                if stagnation_counter % 20 == 0:
-                    for i in self.tau:
-                        for j in self.tau[i]:
-                            self.tau[i][j] = max(tau_min, self.tau[i][j] * 0.5)
-            else:
-                # Favor exploitation
-                self.alpha = min(max_alpha, self.alpha * 1.05)
-                self.beta = max(min_beta, self.beta * 0.95)
-                self.rho = max(0.1, self.rho * 0.95)
-
-            # Construct solutions with varying randomness
-            for ant in range(self.n_ants):
-                # Adjust randomness based on ant index
-                exploration_factor = 1.0 - (ant / self.n_ants)
-                temp_alpha = self.alpha * (1 + exploration_factor * 0.5)
-                temp_beta = self.beta * (1 - exploration_factor * 0.3)
-                
-                self.alpha, temp_alpha = temp_alpha, self.alpha  # Temporarily modify parameters
-                self.beta, temp_beta = temp_beta, self.beta
-                
-                solution = self._construct_solution()
-                
-                # Restore original parameters
-                self.alpha, self.beta = temp_alpha, temp_beta
-                
-                # Apply immediate local search to promising solutions
-                if ant < self.n_ants // 4:  # Apply to top 25% of ants
-                    solution = self._local_search(solution)
-                
-                quality = self._calculate_solution_quality(solution)
-                solutions.append(solution)
-                qualities.append(quality)
-                
-                # Update best solution
-                if quality > self.best_fitness:
-                    self.best_fitness = quality
-                    self.best_solution = copy.deepcopy(solution)
-                    last_improvement = iteration
-                    stagnation_counter = 0
-                    
-                    # Update elite solutions
-                    elite_solutions.append((solution, quality))
-                    elite_solutions.sort(key=lambda x: x[1], reverse=True)
-                    elite_solutions = elite_solutions[:elite_size]
-
-            # Collect statistics
-            avg_quality = statistics.mean(qualities)
-            pheromone_values = [v for i in self.tau.values() for v in i.values()]
-
-            self.stats_data['iteration'].append(iteration)
-            self.stats_data['best_fitness'].append(self.best_fitness)
-            self.stats_data['avg_fitness'].append(avg_quality)
-            self.stats_data['diversity'].append(statistics.stdev(pheromone_values) if pheromone_values else 0)
-            self.stats_data['pheromone_avg'].append(statistics.mean(pheromone_values))
-            self.stats_data['pheromone_max'].append(max(pheromone_values))
-            self.stats_data['pheromone_min'].append(min(pheromone_values))
-            self.stats_data['alpha'].append(self.alpha)
-            self.stats_data['beta'].append(self.beta)
-            self.stats_data['rho'].append(self.rho)
-            
-            if self.debug and iteration % 10 == 0:
-                print(f"\nIteration {iteration}:")
-                print(f"  Best Fitness: {self.best_fitness:.2f}")
-                print(f"  Average Fitness: {avg_quality:.2f}")
-                print(f"  Pheromone Diversity: {self.stats_data['diversity'][-1]:.3f}")
-                print(f"  Parameters - Alpha: {self.alpha:.3f}, Beta: {self.beta:.3f}, Rho: {self.rho:.3f}")
-                print(f"  Avg Pheromone: {self.stats_data['pheromone_avg'][-1]:.3f}")
-                
-            # Update pheromones with elite reinforcement
-            self._update_pheromones(solutions, qualities)
-            
-            # Additional pheromone update from elite solutions
-            if elite_solutions:
-                elite_deposit = self.Q * 2  # Stronger influence from elite solutions
-                for elite_sol, elite_qual in elite_solutions:
-                    for route in elite_sol:
-                        for i in range(len(route)-1):
-                            self.tau[route[i]][route[i+1]] += elite_deposit
-                            self.tau[route[i+1]][route[i]] += elite_deposit
-            
-            # Enforce pheromone bounds
-            for i in self.tau:
-                for j in self.tau[i]:
-                    self.tau[i][j] = min(tau_max, max(tau_min, self.tau[i][j]))
-            
-            # Dynamic convergence criteria
-            stagnation_counter += 1
-            if stagnation_counter >= 30 and iteration > 50:  # Minimum iterations before early stop
-                if self.best_fitness >= 0.95 * max(qualities):  # Within 5% of current best
-                    if self.debug:
-                        print(f"Converged at iteration {iteration}")
-                    break
-            
-            # Restart mechanism
-            if iteration - last_improvement > 40:  # No improvement for 40 iterations
-                if self.debug:
-                    print(f"Restarting at iteration {iteration}")
-                # Preserve best solution but reset pheromones partially
-                for i in self.tau:
-                    for j in self.tau[i]:
-                        self.tau[i][j] = max(tau_min, min(tau_max, 
-                                        self.tau[i][j] * 0.5 + random.random() * 0.5))
-                last_improvement = iteration  # Reset counter
-                stagnation_counter = 0
-        
-        if self.debug:
-            self._print_final_stats()
-            
-        return self.best_solution
-
-    def _print_final_stats(self):
-        """Print final statistics about the optimization process."""
-        print("\n" + "="*50)
-        print("Final Statistics:")
-        print("="*50)
-        print(f"Total Iterations: {len(self.stats_data['iteration'])}")
-        print(f"Best Solution Fitness: {self.best_fitness:.2f}")
-        print(f"Final Diversity: {self.stats_data['diversity'][-1]:.3f}")
-        
-        if self.best_solution:
-            total_profit = sum(sum(c.profit for c in route[1:-1]) 
-                            for route in self.best_solution)
-            total_clients = sum(len(route)-2 for route in self.best_solution)
-            total_time = sum(sum(distance(route[i], route[i+1])
-                            for i in range(len(route)-1))
-                        for route in self.best_solution)
-            
-            print(f"\nBest Solution Details:")
-            print(f"Total Profit: {total_profit}")
-            print(f"Total Clients Served: {total_clients}")
-            print(f"Average Clients per Route: {total_clients/len(self.best_solution):.2f}")
-            print(f"Total Time: {total_time:.2f}")
-            
-            print("\nParameter Evolution:")
-            print(f"Final Alpha: {self.stats_data['alpha'][-1]:.3f}")
-            print(f"Final Beta: {self.stats_data['beta'][-1]:.3f}")
-            print(f"Final Rho: {self.stats_data['rho'][-1]:.3f}")
-            print(f"Final Average Pheromone: {self.stats_data['pheromone_avg'][-1]:.3f}")
-
-    def get_stats(self):
-        """Return collected statistics as a pandas DataFrame."""
-        return pd.DataFrame(self.stats_data)
-
-
-class AntColonyTOP:
-    def __init__(self, start_point, end_point, clients, m: int, L: float, debug=False):
-        self.start_point = start_point
-        self.end_point = end_point
-        self.clients = clients
-        self.m = m  # number of routes
-        self.L = L  # time limit
-        self.debug = debug
-        
-        # Problem size dependent parameters
-        n = len(clients)
-        self.n_ants = min(50, n * 2)  # number of ants scales with problem size
-        self.max_iterations = min(200, n * 5)
-        
-        # ACO parameters
-        self.alpha = 1.0  # pheromone importance
-        self.beta = 2.0   # heuristic information importance
-        self.rho = 0.1    # evaporation rate
-        self.Q = 100.0    # pheromone deposit factor
-        
-        # Initialize pheromone matrix and heuristic information
-        self.tau = {}
-        self.eta = {}
-        all_points = [self.start_point] + self.clients + [self.end_point]
-        for i in all_points:
-            self.tau[i] = {}
-            self.eta[i] = {}
-            for j in all_points:
-                if i != j:
-                    self.tau[i][j] = 1.0  # Initial pheromone
-                    # Heuristic combining distance and profit
-                    dist = math.sqrt((i.x - j.x)**2 + (i.y - j.y)**2)
-                    profit = j.profit if j != self.start_point and j != self.end_point else 0
-                    self.eta[i][j] = (1.0 + profit) / (dist if dist > 0 else 0.1)
-
-        # Statistics tracking
+        self.n_ants = min(50, n * 2)
+        self.max_iterations = min(500, n * 10)
+        self.alpha = 1.0
+        self.beta = 2.0
+        self.rho = 0.1
+        self.q0 = 0.7
+        self.local_search_freq = 20
+        self.max_stagnation = max(100, n // 2)
+        self.tau_max = 1.0
+        self.tau_min = self.tau_max * 0.01
+        self.tau = self._initialize_pheromones()
+        self.eta = self._initialize_heuristic()
         self.best_solution = None
         self.best_fitness = float('-inf')
         self.stats_data = {
-            'iteration': [],
-            'best_fitness': [],
-            'avg_fitness': [],
-            'diversity': [],
-            'pheromone_avg': [],
-            'pheromone_max': [],
+            'iteration': [], 'best_fitness': [], 'avg_fitness': [],
+            'diversity': [], 'pheromone_avg': [], 'pheromone_max': [],
             'pheromone_min': []
         }
 
-    def _select_next_client(self, current, available_clients, current_time, route):
+    def _initialize_pheromones(self):
+        tau = {}
+        all_points = [self.start_point] + self.clients + [self.end_point]
+        for i in all_points:
+            tau[i] = {}
+            for j in all_points:
+                if i != j:
+                    tau[i][j] = self.tau_max
+        return tau
+
+    def _initialize_heuristic(self):
+        eta = {}
+        all_points = [self.start_point] + self.clients + [self.end_point]
+        max_profit = max((c.profit for c in self.clients), default=1)
+        for i in all_points:
+            eta[i] = {}
+            for j in all_points:
+                if i != j:
+                    dist = math.sqrt((i.x - j.x)**2 + (i.y - j.y)**2)
+                    profit = j.profit/max_profit if j in self.clients else 0
+                    eta[i][j] = (1.0 + profit) / (dist if dist > 0 else 0.1)
+        return eta
+
+    def _select_next_client(self, ant_route, current, available_clients, current_time):
         if not available_clients:
             return self.end_point
-
-        # Calculate probabilities for available clients
-        probabilities = []
-        feasible_clients = []
-        
+        feasible = []
         for client in available_clients:
             time_to_client = math.sqrt((current.x - client.x)**2 + (current.y - client.y)**2)
-            time_to_end = math.sqrt((client.x - self.end_point.x)**2 + 
-                                  (client.y - self.end_point.y)**2)
-            
+            time_to_end = math.sqrt((client.x - self.end_point.x)**2 + (client.y - self.end_point.y)**2)
             if current_time + time_to_client + time_to_end <= self.L:
-                feasible_clients.append(client)
-                prob = (self.tau[current][client]**self.alpha * 
-                       self.eta[current][client]**self.beta)
-                probabilities.append(prob)
-        
-        if not feasible_clients:
+                feasible.append(client)
+        if not feasible:
             return self.end_point
-
-        # Convert to numpy array for efficient operations
-        probabilities = np.array(probabilities)
-        total = probabilities.sum()
-        
+        if random.random() < self.q0:
+            max_val = float('-inf')
+            chosen = None
+            for client in feasible:
+                val = self.tau[current][client]**self.alpha * self.eta[current][client]**self.beta
+                if val > max_val:
+                    max_val = val
+                    chosen = client
+            return chosen or self.end_point
+        total = sum(self.tau[current][client]**self.alpha * self.eta[current][client]**self.beta for client in feasible)
         if total == 0:
-            return random.choice(feasible_clients)
-        
-        # Select next client using roulette wheel selection
-        probabilities = probabilities / total
-        return np.random.choice(feasible_clients, p=probabilities)
+            return random.choice(feasible)
+        r = random.random()
+        cum_prob = 0
+        for client in feasible:
+            prob = (self.tau[current][client]**self.alpha * self.eta[current][client]**self.beta) / total
+            cum_prob += prob
+            if cum_prob >= r:
+                return client
+        return feasible[-1]
 
-    def _construct_route(self, available_clients):
+    def _construct_route(self, ant_id):
         route = [self.start_point]
         current = self.start_point
-        current_time = 0.0
-        local_available = available_clients.copy()
-
-        while local_available:
-            next_client = self._select_next_client(current, local_available, current_time, route)
+        current_time = 0
+        available = set(self.clients)
+        while available:
+            next_client = self._select_next_client(route, current, available, current_time)
             if next_client == self.end_point:
                 break
-            
-            time_to_next = math.sqrt((current.x - next_client.x)**2 + 
-                                   (current.y - next_client.y)**2)
-            current_time += time_to_next
             route.append(next_client)
+            time_to_next = math.sqrt((current.x - next_client.x)**2 + (current.y - next_client.y)**2)
+            current_time += time_to_next
             current = next_client
-            local_available.remove(next_client)
-
+            available.remove(next_client)
+            self.tau[route[-2]][route[-1]] = (1 - self.rho) * self.tau[route[-2]][route[-1]] + self.rho * self.tau_min
         route.append(self.end_point)
         return route
 
     def _construct_solution(self):
-        available_clients = set(self.clients)
         solution = []
-
+        available_clients = set(self.clients)
         for _ in range(self.m):
             if not available_clients:
                 break
-            route = self._construct_route(available_clients)
-            if len(route) > 2:  # Only add routes with clients
+            route = self._construct_route(len(solution))
+            if len(route) > 2:
                 solution.append(route)
                 available_clients -= set(route[1:-1])
-
         return solution
 
     def _calculate_solution_quality(self, solution):
         if not solution:
             return 0
-        
-        total_profit = 0
-        total_time = 0
-        used_clients = set()
-
-        for route in solution:
-            # Check time constraint
-            route_time = sum(math.sqrt((route[i].x - route[i+1].x)**2 + 
-                                     (route[i].y - route[i+1].y)**2)
-                           for i in range(len(route)-1))
-            
-            if route_time > self.L:
-                return 0
-            
-            # Calculate route profit and check for duplicates
-            route_profit = sum(client.profit for client in route[1:-1])
-            route_clients = {client.id for client in route[1:-1]}
-            
-            if route_clients & used_clients:  # Check for duplicate clients
-                return 0
-            
-            used_clients.update(route_clients)
-            total_profit += route_profit
-            total_time += route_time
-
-        # Quality score includes profit and time efficiency
-        quality = (total_profit * 
-                  (1 - total_time/(self.m * self.L)) * 
-                  (len(used_clients) / len(self.clients)))
-        
-        return quality
+        total_profit = sum(sum(c.profit for c in route[1:-1]) for route in solution)
+        total_distance = sum(sum(math.sqrt((route[i].x - route[i+1].x)**2 + (route[i].y - route[i+1].y)**2)
+                               for i in range(len(route)-1)) for route in solution)
+        if total_distance > self.L:
+            return 0
+        quality = total_profit * (1 - total_distance/(self.m * self.L))
+        total_clients = sum(len(route)-2 for route in solution)
+        coverage_bonus = total_clients / len(self.clients)
+        return quality * (1 + coverage_bonus)
 
     def _update_pheromones(self, solutions, qualities):
-        # Evaporation
         for i in self.tau:
             for j in self.tau[i]:
                 self.tau[i][j] *= (1 - self.rho)
-
-        # Deposit new pheromones
-        for solution, quality in zip(solutions, qualities):
-            if quality > 0:  # Only deposit for valid solutions
-                deposit = self.Q * quality
-                for route in solution:
-                    for i in range(len(route)-1):
-                        self.tau[route[i]][route[i+1]] += deposit
-                        # Symmetric update
-                        self.tau[route[i+1]][route[i]] = self.tau[route[i]][route[i+1]]
+        best_idx = np.argmax(qualities)
+        best_solution = solutions[best_idx]
+        best_quality = qualities[best_idx]
+        for route in best_solution:
+            for i in range(len(route)-1):
+                deposit = 1.0 / (1.0 + len(route))
+                self.tau[route[i]][route[i+1]] += self.rho * deposit * best_quality
+                self.tau[route[i+1]][route[i]] = self.tau[route[i]][route[i+1]]
+        for i in self.tau:
+            for j in self.tau[i]:
+                self.tau[i][j] = min(self.tau_max, max(self.tau_min, self.tau[i][j]))
 
     def _calculate_diversity(self, solutions):
         if not solutions:
             return 0
-        
-        diversity_sum = 0
+        diversity = 0
         comparisons = 0
-        
         for i in range(len(solutions)):
-            for j in range(i + 1, len(solutions)):
-                sol1_clients = {c.id for route in solutions[i] for c in route[1:-1]}
-                sol2_clients = {c.id for route in solutions[j] for c in route[1:-1]}
-                
-                if sol1_clients or sol2_clients:
-                    jaccard = len(sol1_clients & sol2_clients) / len(sol1_clients | sol2_clients)
-                    diversity_sum += 1 - jaccard
+            for j in range(i+1, len(solutions)):
+                clients1 = set(c.id for route in solutions[i] for c in route[1:-1])
+                clients2 = set(c.id for route in solutions[j] for c in route[1:-1])
+                if clients1 or clients2:
+                    hamming = len(clients1.symmetric_difference(clients2))
+                    diversity += hamming / max(len(clients1), len(clients2))
                     comparisons += 1
-        
-        return diversity_sum / max(1, comparisons)
+        return diversity / max(1, comparisons)
 
     def solve(self):
-        start_time = time.time()
         stagnation_counter = 0
-        
         for iteration in range(self.max_iterations):
-            # Construct solutions
             solutions = []
             qualities = []
-            
-            for _ in range(self.n_ants):
+            for ant in range(self.n_ants):
                 solution = self._construct_solution()
+                if iteration % self.local_search_freq == 0 and len(solution) > 0:
+                    solution = self._local_search(solution)
                 quality = self._calculate_solution_quality(solution)
                 solutions.append(solution)
                 qualities.append(quality)
-                
-                # Update best solution
                 if quality > self.best_fitness:
                     self.best_fitness = quality
                     self.best_solution = copy.deepcopy(solution)
                     stagnation_counter = 0
                 else:
                     stagnation_counter += 1
-
-            # Update pheromones
-            self._update_pheromones(solutions, qualities)
-            
-            # Collect statistics
             avg_fitness = statistics.mean(qualities)
             diversity = self._calculate_diversity(solutions)
             pheromone_values = [v for d in self.tau.values() for v in d.values()]
-            
             self.stats_data['iteration'].append(iteration)
             self.stats_data['best_fitness'].append(self.best_fitness)
             self.stats_data['avg_fitness'].append(avg_fitness)
@@ -688,25 +223,48 @@ class AntColonyTOP:
             self.stats_data['pheromone_avg'].append(statistics.mean(pheromone_values))
             self.stats_data['pheromone_max'].append(max(pheromone_values))
             self.stats_data['pheromone_min'].append(min(pheromone_values))
-            
-            # Debug printing
             if self.debug and iteration % 10 == 0:
                 print(f"\nIteration {iteration}:")
-                print(f"  Best Fitness: {self.best_fitness:.2f}")
-                print(f"  Average Fitness: {avg_fitness:.2f}")
-                print(f"  Diversity: {diversity:.3f}")
-            
-            # Early stopping check
-            if stagnation_counter >= 50:  # Increased from 30 to 50
+                print(f"  Best Fitness = {self.best_fitness:.2f}")
+                print(f"  Average Fitness = {avg_fitness:.2f}")
+                print(f"  Diversity = {diversity:.3f}")
+            self._update_pheromones(solutions, qualities)
+            if stagnation_counter > self.max_stagnation and iteration > self.max_iterations // 4:
                 if self.debug:
-                    print(f"\nEarly stopping at iteration {iteration}: No improvement for {stagnation_counter} iterations")
+                    print(f"\nEarly stopping at iteration {iteration}")
+                    print(f"No improvement for {stagnation_counter} iterations")
                 break
-
         return self.best_solution
 
+    def _local_search(self, solution):
+        if not solution:
+            return solution
+        improved = True
+        while improved:
+            improved = False
+            for route_idx, route in enumerate(solution):
+                if len(route) <= 4:
+                    continue
+                best_length = sum(math.sqrt((route[i].x - route[i+1].x)**2 + (route[i].y - route[i+1].y)**2)
+                                for i in range(len(route)-1))
+                for i in range(1, len(route)-2):
+                    for j in range(i+1, len(route)-1):
+                        new_route = route[:i] + list(reversed(route[i:j+1])) + route[j+1:]
+                        new_length = sum(math.sqrt((new_route[k].x - new_route[k+1].x)**2 + 
+                                                 (new_route[k].y - new_route[k+1].y)**2)
+                                       for k in range(len(new_route)-1))
+                        if new_length < best_length and new_length <= self.L:
+                            solution[route_idx] = new_route
+                            improved = True
+                            best_length = new_length
+        return solution
+
     def get_stats(self):
-        """Return collected statistics as a pandas DataFrame."""
         return pd.DataFrame(self.stats_data)
+
+
+########################################################################################################################################################################
+
 class GeneticTOP:
     def __init__(self, start_point, end_point, clients, m, L, debug=False):
         self.start_point = start_point
@@ -1201,21 +759,38 @@ def lire_instance_chao(nom_fichier):
     return points[0], points[1], points[2:], int(m), L
 
 def visualize_solution(solution, start_point, end_point, clients, filename):
-    """Simple visualization of solution routes."""
-    plt.figure(figsize=(10, 6))
+    plt.figure(figsize=(12, 8))
+    
+    # Create sets of visited and unvisited clients
+    visited_clients = {c.id for route in solution for c in route[1:-1]}
+    unvisited_clients = [c for c in clients if c.id not in visited_clients]
+    
+    # Plot unvisited clients
+    if unvisited_clients:
+        plt.scatter([c.x for c in unvisited_clients], 
+                   [c.y for c in unvisited_clients], 
+                   c='gray', alpha=0.5, label='Unvisited Clients')
     
     # Plot start and end points
     plt.scatter(start_point.x, start_point.y, c='green', marker='s', s=100, label='Start')
     plt.scatter(end_point.x, end_point.y, c='red', marker='s', s=100, label='End')
     
-    # Plot routes with different colors
+    # Plot routes and their visited clients
     colors = plt.cm.rainbow(np.linspace(0, 1, len(solution)))
     for i, (route, color) in enumerate(zip(solution, colors)):
         route_x = [c.x for c in route]
         route_y = [c.y for c in route]
-        plt.plot(route_x, route_y, c=color, linewidth=2, label=f'Route {i+1}')
+        
+        # Plot route path
+        plt.plot(route_x, route_y, c=color, linewidth=2)
+        
+        # Plot visited clients for this route
+        if len(route) > 2:
+            plt.scatter(route_x[1:-1], route_y[1:-1], 
+                       c=[color], s=100, 
+                       label=f'Route {i+1} ({len(route)-2} clients)')
     
-    plt.title('TOP Solution Routes')
+    plt.title('TOP Solution Visualization')
     plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     plt.grid(True)
     plt.tight_layout()
@@ -1223,53 +798,78 @@ def visualize_solution(solution, start_point, end_point, clients, filename):
     plt.close()
 
 def plot_algorithm_stats(stats_data, algorithm_name, output_dir):
-    """Plot various statistics for algorithm performance."""
-    # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
     
     # Fitness Evolution
-    plt.figure(figsize=(10, 6))
-    plt.plot(stats_data['iteration'], stats_data['best_fitness'], label='Best Fitness')
-    plt.plot(stats_data['iteration'], stats_data['avg_fitness'], label='Average Fitness')
-    plt.title(f'{algorithm_name} Fitness Evolution')
+    plt.figure(figsize=(12, 6))
+    plt.plot(stats_data['iteration'], stats_data['best_fitness'], 
+             label='Best Fitness', linewidth=2)
+    plt.plot(stats_data['iteration'], stats_data['avg_fitness'], 
+             label='Average Fitness', linewidth=2, alpha=0.7)
+    plt.title(f'{algorithm_name} Fitness Evolution', pad=20)
     plt.xlabel('Iteration')
     plt.ylabel('Fitness')
     plt.legend()
-    plt.grid(True)
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
     plt.savefig(f'{output_dir}/{algorithm_name.lower()}_fitness.png')
     plt.close()
     
     # Diversity Evolution
-    plt.figure(figsize=(10, 6))
-    plt.plot(stats_data['iteration'], stats_data['diversity'])
-    plt.title(f'{algorithm_name} Population Diversity')
+    plt.figure(figsize=(12, 6))
+    plt.plot(stats_data['iteration'], stats_data['diversity'], 
+             color='purple', linewidth=2)
+    plt.title(f'{algorithm_name} Population Diversity', pad=20)
     plt.xlabel('Iteration')
     plt.ylabel('Diversity')
-    plt.grid(True)
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
     plt.savefig(f'{output_dir}/{algorithm_name.lower()}_diversity.png')
     plt.close()
     
-    if 'mutation_rate' in stats_data:  # For Genetic Algorithm
-        plt.figure(figsize=(10, 6))
-        plt.plot(stats_data['iteration'], stats_data['mutation_rate'])
-        plt.title(f'{algorithm_name} Mutation Rate Evolution')
+    # Algorithm-specific plots
+    if 'mutation_rate' in stats_data:  # Genetic Algorithm
+        plt.figure(figsize=(12, 6))
+        plt.plot(stats_data['iteration'], stats_data['mutation_rate'], 
+                 color='orange', linewidth=2)
+        plt.title(f'{algorithm_name} Mutation Rate Evolution', pad=20)
         plt.xlabel('Iteration')
         plt.ylabel('Mutation Rate')
-        plt.grid(True)
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
         plt.savefig(f'{output_dir}/{algorithm_name.lower()}_mutation_rate.png')
+        plt.close()
+    
+    elif 'pheromone_avg' in stats_data:  # Ant Colony
+        plt.figure(figsize=(12, 6))
+        plt.plot(stats_data['iteration'], stats_data['pheromone_max'], 
+                 label='Max', linewidth=2)
+        plt.plot(stats_data['iteration'], stats_data['pheromone_avg'], 
+                 label='Average', linewidth=2)
+        plt.plot(stats_data['iteration'], stats_data['pheromone_min'], 
+                 label='Min', linewidth=2)
+        plt.title(f'{algorithm_name} Pheromone Levels Evolution', pad=20)
+        plt.xlabel('Iteration')
+        plt.ylabel('Pheromone Level')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(f'{output_dir}/{algorithm_name.lower()}_pheromone.png')
         plt.close()
 
 def main(instance_file, debug=False):
+    # Extract instance size from filename
+    instance_size = instance_file.split('_')[-1].replace('.txt', '')
+    
     # Read instance
     start_point, end_point, clients, m, L = lire_instance_chao(instance_file)
     
-    # Create output directory for plots
-    output_dir = 'algorithm_results'
+    # Create output directory with instance size
+    output_dir = f'algorithm_results_{instance_size}'
     os.makedirs(output_dir, exist_ok=True)
     
     # Run algorithms and collect results
     algorithms = [
-        
         ('AntColonyTOP', AntColonyTOP(start_point, end_point, clients, m, L, debug=debug)),
         ('GeneticTOP', GeneticTOP(start_point, end_point, clients, m, L, debug=debug))
     ]
@@ -1278,7 +878,6 @@ def main(instance_file, debug=False):
     for name, algorithm in algorithms:
         print(f"\nRunning {name}...")
         
-        # Run algorithm
         start_time = time.time()
         if isinstance(algorithm, GeneticTOP):
             solution = algorithm.evolve()
@@ -1286,22 +885,30 @@ def main(instance_file, debug=False):
             solution = algorithm.solve()
         execution_time = time.time() - start_time
         
-        # Calculate solution quality
+        # Calculate solution metrics
         total_profit = sum(sum(c.profit for c in route[1:-1]) for route in solution)
         total_clients = sum(len(route)-2 for route in solution)
+        total_distance = sum(sum(math.sqrt((route[i].x - route[i+1].x)**2 + 
+                                         (route[i].y - route[i+1].y)**2)
+                              for i in range(len(route)-1))
+                           for route in solution)
         
-        # Visualize solution
+        # Visualize solution and stats
         visualize_solution(solution, start_point, end_point, clients,
                          f'{output_dir}/{name.lower()}_solution.png')
+        plot_algorithm_stats(algorithm.get_stats(), name, output_dir)
         
-        # Store basic results
+        # Store results
         results.append({
+            'Instance_Size': instance_size,
             'Algorithm': name,
-            'Execution Time': execution_time,
-            'Final Fitness': algorithm.best_fitness,
-            'Total Profit': total_profit,
-            'Total Clients': total_clients,
-            'Routes': len(solution)
+            'Execution_Time': execution_time,
+            'Final_Fitness': algorithm.best_fitness,
+            'Total_Profit': total_profit,
+            'Total_Clients': total_clients,
+            'Total_Distance': total_distance,
+            'Routes': len(solution),
+            'Timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
         })
         
         print(f"Completed {name}")
@@ -1311,12 +918,18 @@ def main(instance_file, debug=False):
         print(f"Total clients served: {total_clients}")
         print(f"Number of routes: {len(solution)}")
     
-    # Save summary results
+    # Append results to history CSV
     results_df = pd.DataFrame(results)
-    results_df.to_csv(f'{output_dir}/summary_results.csv', index=False)
-    print("\nResults saved in 'algorithm_results' directory")
+    history_file = 'algorithm_history.csv'
+    
+    if os.path.exists(history_file):
+        results_df.to_csv(history_file, mode='a', header=False, index=False)
+    else:
+        results_df.to_csv(history_file, index=False)
+    
+    print(results_df)
+    print(f"\nResults appended to {history_file}")
 
 if __name__ == "__main__":
-    instance_file = "set_66_1/set_66_1_050.txt"
-    main(instance_file, debug=True)  # Set debug=True if you want to see progress prints
-    
+    instance_file = "set_66_1/set_66_1_100.txt"
+    main(instance_file, debug=True)
