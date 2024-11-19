@@ -571,11 +571,13 @@ class AntColonyTOP:
                 return client
         return feasible[-1]
 
-    def _construct_route(self, ant_id):
+    def _construct_route(self, ant_id, used_clients=None):
         route = [self.start_point]
         current = self.start_point
         current_time = 0
-        available = set(self.clients)
+        if used_clients is None:
+            used_clients = set()
+        available = set(self.clients) - used_clients  # Only consider unused clients
         while available:
             next_client = self._select_next_client(route, current, available, current_time)
             if next_client == self.end_point:
@@ -591,14 +593,14 @@ class AntColonyTOP:
 
     def _construct_solution(self):
         solution = []
-        available_clients = set(self.clients)
+        used_clients = set()
         for _ in range(self.m):
-            if not available_clients:
+            if not (set(self.clients) - used_clients):  # If no more available clients
                 break
-            route = self._construct_route(len(solution))
+            route = self._construct_route(len(solution), used_clients)
             if len(route) > 2:
                 solution.append(route)
-                available_clients -= set(route[1:-1])
+                used_clients.update(set(route[1:-1]))  # Add newly visited clients to used set
         return solution
 
     def _calculate_solution_quality(self, solution):
@@ -1307,6 +1309,7 @@ def plot_algorithm_stats(stats_data, algorithm_name, output_dir):
         plt.savefig(f'{output_dir}/{algorithm_name.lower()}_pheromone.png')
         plt.close()
 
+
 def main(instance_file, debug=False):
     # Extract instance size from filename
     instance_size = instance_file.split('_')[-1].replace('.txt', '')
@@ -1337,40 +1340,132 @@ def main(instance_file, debug=False):
             solution = algorithm.solve()
         execution_time = time.time() - start_time
         
-        # Calculate solution metrics
+        # Get algorithm-specific statistics
+        stats_df = algorithm.get_stats()
+        
+        # Filter for every 10th iteration
+        stats_df = stats_df[stats_df['iteration'] % 10 == 0].copy()
+        
+        # Add instance information
+        stats_df['Instance_Size'] = instance_size
+        stats_df['Instance_File'] = instance_file
+        stats_df['Timestamp'] = time.strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Save to algorithm-specific CSV
+        stats_file = f'{name.lower()}_stats.csv'
+        
+        if os.path.exists(stats_file):
+            stats_df.to_csv(stats_file, mode='a', header=False, index=False)
+        else:
+            stats_df.to_csv(stats_file, index=False)
+        
+        # Client uniqueness check
+        visited_clients = set()
+        duplicate_clients = set()
+        clients_per_route = []
+        
+        for route in solution:
+            route_clients = set()
+            for client in route[1:-1]:  # Exclude start and end points
+                if client.id in visited_clients:
+                    duplicate_clients.add(client.id)
+                visited_clients.add(client.id)
+                route_clients.add(client.id)
+            clients_per_route.append(len(route_clients))
+        
+        # Calculate client-related metrics
+        total_unique_clients = len(visited_clients)
+        total_duplicate_clients = len(duplicate_clients)
+        clients_visited_multiple_times = list(duplicate_clients)
+        avg_clients_per_route = statistics.mean(clients_per_route) if clients_per_route else 0
+        max_clients_per_route = max(clients_per_route) if clients_per_route else 0
+        min_clients_per_route = min(clients_per_route) if clients_per_route else 0
+        
+        # Calculate original metrics
         total_profit = sum(sum(c.profit for c in route[1:-1]) for route in solution)
-        total_clients = sum(len(route)-2 for route in solution)
+        total_clients = sum(len(route)-2 for route in solution)  # This might include duplicates
         total_distance = sum(sum(math.sqrt((route[i].x - route[i+1].x)**2 + 
                                          (route[i].y - route[i+1].y)**2)
                               for i in range(len(route)-1))
                            for route in solution)
+        
+        # Calculate route times
+        route_times = []
+        route_profits = []
+        routes_exceeding_L = 0
+        max_route_time = 0
+        min_route_time = float('inf')
+        
+        for route in solution:
+            route_time = sum(math.sqrt((route[i].x - route[i+1].x)**2 + 
+                                     (route[i].y - route[i+1].y)**2)
+                           for i in range(len(route)-1))
+            route_profit = sum(c.profit for c in route[1:-1])
+            
+            route_times.append(route_time)
+            route_profits.append(route_profit)
+            
+            if route_time > L:
+                routes_exceeding_L += 1
+            
+            max_route_time = max(max_route_time, route_time)
+            min_route_time = min(min_route_time, route_time) if route_time > 0 else min_route_time
+        
+        # Calculate route time statistics
+        avg_route_time = statistics.mean(route_times) if route_times else 0
+        route_time_std = statistics.stdev(route_times) if len(route_times) > 1 else 0
         
         # Visualize solution and stats
         visualize_solution(solution, start_point, end_point, clients,
                          f'{output_dir}/{name.lower()}_solution.png')
         plot_algorithm_stats(algorithm.get_stats(), name, output_dir)
         
-        # Store results
+        # Store results for overall history
         results.append({
             'Instance_Size': instance_size,
             'Algorithm': name,
             'Execution_Time': execution_time,
             'Final_Fitness': algorithm.best_fitness,
             'Total_Profit': total_profit,
-            'Total_Clients': total_clients,
-            'Total_Distance': total_distance,
+            'Total_Available_Clients': len(clients),
+            'Total_Unique_Clients_Visited': total_unique_clients,
+            'Total_Duplicate_Clients': total_duplicate_clients,
+            'Uniqueness_Constraint_Respected': total_duplicate_clients == 0,
+            'Client_Coverage_Ratio': total_unique_clients / len(clients),
+            'Avg_Clients_Per_Route': avg_clients_per_route,
+            'Max_Clients_Per_Route': max_clients_per_route,
+            'Min_Clients_Per_Route': min_clients_per_route,
             'Routes': len(solution),
-            'Timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
+            'Time_Limit_L': L,
+            'Max_Route_Time': max_route_time,
+            'Min_Route_Time': min_route_time if min_route_time != float('inf') else 0,
+            'Avg_Route_Time': avg_route_time,
+            'Route_Time_Std': route_time_std,
+            'Routes_Exceeding_L': routes_exceeding_L,
+            'Time_Constraint_Respected': routes_exceeding_L == 0,
+            'Route_Time_Usage': avg_route_time / L if L > 0 else 0,
+            'Time_Efficiency': 1 - (avg_route_time / L) if L > 0 else 0,
+            'All_Constraints_Respected': (routes_exceeding_L == 0 and 
+                            total_duplicate_clients == 0 and 
+                            len(solution) <= m),
+            'Timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
+            'Instance_File': instance_file
         })
         
         print(f"Completed {name}")
         print(f"Execution time: {execution_time:.2f} seconds")
         print(f"Final fitness: {algorithm.best_fitness:.2f}")
         print(f"Total profit: {total_profit}")
-        print(f"Total clients served: {total_clients}")
+        print(f"Unique clients served: {total_unique_clients}/{len(clients)}")
+        print(f"Duplicate clients: {total_duplicate_clients}")
         print(f"Number of routes: {len(solution)}")
-    
-    # Append results to history CSV
+        print(f"Time constraint (L): {L}")
+        print(f"Maximum route time: {max_route_time:.2f}")
+        print(f"Average route time: {avg_route_time:.2f}")
+        print(f"Routes exceeding time limit: {routes_exceeding_L}")
+        print(f"All constraints respected: {routes_exceeding_L == 0 and total_duplicate_clients == 0}")
+        
+    # Append results to main history CSV
     results_df = pd.DataFrame(results)
     history_file = 'algorithm_history.csv'
     
@@ -1381,6 +1476,7 @@ def main(instance_file, debug=False):
     
     print(results_df)
     print(f"\nResults appended to {history_file}")
+    print("Individual algorithm statistics saved to respective CSV files")
 
 def main_for_all_instances(folder_pattern, debug=False):
         instance_files = glob.glob(folder_pattern)
@@ -1390,7 +1486,10 @@ def main_for_all_instances(folder_pattern, debug=False):
 if __name__ == "__main__":
         # main_for_all_instances("set_64_1/*.txt", debug=True)
         # main_for_all_instances("set_66_1/*.txt", debug=True)
-        main_for_all_instances("teste/*.txt", debug=True)
+        # main("set_64_1/set_64_1_60.txt", debug=True)
+        main("set_64_1/set_64_1_80.txt", debug=True)
+        # main("set_64_1/set_64_1_30.txt", debug=True)
+
 
 
 

@@ -3053,3 +3053,78 @@ class GeneticTOP:
     # def get_stats(self):
     #     """Return collected statistics as a pandas DataFrame."""
     #     return pd.DataFrame(self.stats_data)
+
+# def main(instance_file, debug=False):
+#     # Extract instance size from filename
+#     instance_size = instance_file.split('_')[-1].replace('.txt', '')
+    
+#     # Read instance
+#     start_point, end_point, clients, m, L = lire_instance_chao(instance_file)
+    
+#     # Create output directory with instance size
+#     output_dir = f'algorithm_results_{instance_size}'
+#     os.makedirs(output_dir, exist_ok=True)
+    
+#     # Run algorithms and collect results
+#     algorithms = [
+#         ('GreedyTOP', GreedyTOP(start_point, end_point, clients, m, L, debug=debug)),
+#         ('SimulatedAnnealingTOP', SimulatedAnnealingTOP(start_point, end_point, clients, m, L, debug=debug)),
+#         ('AntColonyTOP', AntColonyTOP(start_point, end_point, clients, m, L, debug=debug)),
+#         ('GeneticTOP', GeneticTOP(start_point, end_point, clients, m, L, debug=debug))
+#     ]
+    
+#     results = []
+#     for name, algorithm in algorithms:
+#         print(f"\nRunning {name}...")
+        
+#         start_time = time.time()
+#         if isinstance(algorithm, GeneticTOP):
+#             solution = algorithm.evolve()
+#         else:
+#             solution = algorithm.solve()
+#         execution_time = time.time() - start_time
+        
+#         # Calculate solution metrics
+#         total_profit = sum(sum(c.profit for c in route[1:-1]) for route in solution)
+#         total_clients = sum(len(route)-2 for route in solution)
+#         total_distance = sum(sum(math.sqrt((route[i].x - route[i+1].x)**2 + 
+#                                          (route[i].y - route[i+1].y)**2)
+#                               for i in range(len(route)-1))
+#                            for route in solution)
+        
+#         # Visualize solution and stats
+#         visualize_solution(solution, start_point, end_point, clients,
+#                          f'{output_dir}/{name.lower()}_solution.png')
+#         plot_algorithm_stats(algorithm.get_stats(), name, output_dir)
+        
+#         # Store results
+#         results.append({
+#             'Instance_Size': instance_size,
+#             'Algorithm': name,
+#             'Execution_Time': execution_time,
+#             'Final_Fitness': algorithm.best_fitness,
+#             'Total_Profit': total_profit,
+#             'Total_Clients': total_clients,
+#             'Total_Distance': total_distance,
+#             'Routes': len(solution),
+#             'Timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
+#         })
+        
+#         print(f"Completed {name}")
+#         print(f"Execution time: {execution_time:.2f} seconds")
+#         print(f"Final fitness: {algorithm.best_fitness:.2f}")
+#         print(f"Total profit: {total_profit}")
+#         print(f"Total clients served: {total_clients}")
+#         print(f"Number of routes: {len(solution)}")
+    
+#     # Append results to history CSV
+#     results_df = pd.DataFrame(results)
+#     history_file = 'algorithm_history.csv'
+    
+#     if os.path.exists(history_file):
+#         results_df.to_csv(history_file, mode='a', header=False, index=False)
+#     else:
+#         results_df.to_csv(history_file, index=False)
+    
+#     print(results_df)
+#     print(f"\nResults appended to {history_file}")
