@@ -1,0 +1,35 @@
+# non symetric test set 
+Set_100_234/
+
+#small time constraint isntances
+p4.2.a.txt
+p4.2.j.txt
+p4.2.t.txt
+
+#medium time constraint isntances
+p4.3.a.txt
+p4.3.j.txt
+p4.3.t.txt
+
+#big time constraint isntances
+p4.4.a.txt
+p4.4.j.txt
+p4.4.t.txt
+
+# symetric test set fodler
+Set_64_234/
+
+#small time constraint isntances
+p6.2.d.txt
+p6.2.i.txt
+p6.2.n.txt
+
+#medium time constraint isntances
+p6.3.d.txt
+p6.3.i.txt
+p6.3.n.txt
+
+#high time constraint isntances
+p6.4.d.txt
+p6.4.i.txt
+p6.4.n.txt

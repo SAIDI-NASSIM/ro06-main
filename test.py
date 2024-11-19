@@ -23,7 +23,6 @@ class Client:
         self.profit = profit
 
 
-
 class GreedyTOP:
     def __init__(self, start_point, end_point, clients, m, L, debug=False):
         self.start_point = start_point
@@ -1328,7 +1327,49 @@ def main_for_all_instances(folder_pattern, debug=False):
             main(instance_file, debug)
 
 if __name__ == "__main__":
-        main("set_100_234/p4.3.m.txt", debug=True)
-
+     non_symmetric_files = {
+         "small": [
+             "Set_100_234/p4.2.a.txt",
+             "Set_100_234/p4.2.j.txt",
+             "Set_100_234/p4.2.t.txt"
+         ],
+         "medium": [
+             "Set_100_234/p4.3.a.txt",
+             "Set_100_234/p4.3.j.txt",
+             "Set_100_234/p4.3.t.txt"
+         ],
+         "big": [
+             "Set_100_234/p4.4.a.txt",
+             "Set_100_234/p4.4.j.txt",
+             "Set_100_234/p4.4.t.txt"
+         ]
+     }
+     # Symmetric test set
+     symmetric_files = {
+         "small": [
+             "Set_64_234/p6.2.d.txt",
+             "Set_64_234/p6.2.i.txt",
+             "Set_64_234/p6.2.n.txt"
+         ],
+         "medium": [
+             "Set_64_234/p6.3.d.txt",
+             "Set_64_234/p6.3.i.txt",
+             "Set_64_234/p6.3.n.txt"
+         ],
+         "high": [
+             "Set_64_234/p6.4.d.txt",
+             "Set_64_234/p6.4.i.txt",
+             "Set_64_234/p6.4.n.txt"
+         ]
+     }
+     # Run main for all instance files
+     for size, files in non_symmetric_files.items():
+         print(f"\nRunning non-symmetric test set ({size} time constraint instances):")
+         for instance_file in files:
+             main(instance_file, debug=True)
+     for size, files in symmetric_files.items():
+         print(f"\nRunning symmetric test set ({size} time constraint instances):")
+         for instance_file in files:
+             main(instance_file, debug=True)
 
 
