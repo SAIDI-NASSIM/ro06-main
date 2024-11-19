@@ -685,21 +685,35 @@ class GeneticTOP:
     
 class SimulatedAnnealingTOP:
     def __init__(self, start_point, end_point, clients, m, L, max_runtime=300, debug=False):
-        self.start_point = start_point; self.end_point = end_point; self.clients = clients
-        self.m = m; self.L = L; self.debug = debug; self.max_runtime = max_runtime
-        n = len(clients)
+        self.start_point = start_point
+        self.end_point = end_point
+        self.clients = clients
+        self.m = m
+        self.L = L
+        self.debug = debug
+        self.max_runtime = max_runtime
+        
+        # Algorithm parameters
         self.initial_temp = 100
         self.final_temp = 1
-        self.max_iterations = min(125, n * 4)      # Match other methods
-        self.iterations_per_temp = min(150, n * 2) # Match population/colony size
+        self.max_iterations = min(125, len(clients) * 4)
+        self.iterations_per_temp = min(150, len(clients) * 2)
         self.alpha = pow(self.final_temp/self.initial_temp, 1.0/self.max_iterations)
+        
+        # Initialize tracking variables
         self.distances = self._precompute_distances()
         self.best_solution = None
         self.best_fitness = float('-inf')
-        self.stats_data = {'iteration': [], 'best_fitness': [], 'avg_fitness': [], 
-                          'current_temp': [], 'acceptance_rate': []}
+        self.stats_data = {
+            'iteration': [], 
+            'best_fitness': [], 
+            'avg_fitness': [], 
+            'current_temp': [], 
+            'acceptance_rate': []
+        }
 
     def _precompute_distances(self):
+        """Precompute distances between all points for efficiency"""
         distances = {}
         all_points = [self.start_point] + self.clients + [self.end_point]
         for i, p1 in enumerate(all_points):
@@ -709,36 +723,48 @@ class SimulatedAnnealingTOP:
                     distances[p1.id][p2.id] = ((p1.x - p2.x)**2 + (p1.y - p2.y)**2)**0.5
         return distances
 
-    def _calculate_solution_quality(self, solution):
-        if not solution: return 0
-        total_profit = 0; total_distance = 0; used_clients = set()
-        for route in solution:
-            route_profit = 0; route_distance = 0
-            for i in range(len(route) - 1):
-                route_distance += self.distances[route[i].id][route[i+1].id]
-                if i > 0 and route[i].id not in used_clients:
-                    route_profit += route[i].profit
-                    used_clients.add(route[i].id)
-            if route_distance <= self.L:
-                total_profit += route_profit
-                total_distance += route_distance
-        if total_distance > self.L * self.m: return 0
-        coverage = len(used_clients) / len(self.clients)
-        efficiency = 1 - (total_distance / (self.L * self.m))
-        return total_profit * (1 + 0.15 * coverage + 0.1 * efficiency)
+    def _validate_route(self, route):
+        """Check if a route respects the time limit L"""
+        if len(route) < 3:
+            return False
+        
+        total_time = 0
+        for i in range(len(route) - 1):
+            total_time += self.distances[route[i].id][route[i+1].id]
+            
+        return total_time <= self.L
+
+    def _get_route_length(self, route):
+        """Calculate total length/time of a route"""
+        return sum(self.distances[route[i].id][route[i+1].id] for i in range(len(route) - 1))
+
+    def _get_used_clients(self, solution):
+        """Get set of all clients used in the solution"""
+        return {c.id for route in solution for c in route[1:-1]}
 
     def _create_initial_solution(self):
-        solution = []; available_clients = set(self.clients)
+        """Create initial feasible solution"""
+        solution = []
+        available_clients = set(self.clients)
+        
         for _ in range(self.m):
-            if not available_clients: break
-            route = [self.start_point]; current = self.start_point; current_time = 0
+            if not available_clients:
+                break
+                
+            route = [self.start_point]
+            current = self.start_point
+            current_time = 0
+            
             while available_clients:
                 candidates = sorted(available_clients, 
                                  key=lambda c: self.distances[current.id][c.id])[:10]
-                if not candidates: break
+                if not candidates:
+                    break
+                    
                 client = random.choice(candidates[:3])
                 time_to_client = self.distances[current.id][client.id]
                 time_to_end = self.distances[client.id][self.end_point.id]
+                
                 if current_time + time_to_client + time_to_end <= self.L:
                     route.append(client)
                     current_time += time_to_client
@@ -746,76 +772,157 @@ class SimulatedAnnealingTOP:
                     available_clients.remove(client)
                 else:
                     break
+            
             if len(route) > 1:
                 route.append(self.end_point)
                 solution.append(route)
+                
         return solution
 
     def _generate_neighbor(self, solution):
-        if not solution: return solution
+        """Generate feasible neighbor solution ensuring no constraints are violated"""
+        if not solution:
+            return solution
+            
         neighbor = copy.deepcopy(solution)
         move_type = random.random()
         
-        if move_type < 0.3 and len(neighbor) >= 2:  # Inter-route swap
-            route1, route2 = random.sample(neighbor, 2)
-            if len(route1) > 3 and len(route2) > 3:
-                pos1 = random.randrange(1, len(route1) - 1)
-                pos2 = random.randrange(1, len(route2) - 1)
-                route1[pos1], route2[pos2] = route2[pos2], route1[pos1]
-        
-        elif move_type < 0.6:  # Intra-route 2-opt
-            if neighbor:
-                route = random.choice(neighbor)
-                if len(route) > 4:
-                    i = random.randrange(1, len(route) - 2)
-                    j = random.randrange(i + 1, len(route) - 1)
-                    route[i:j+1] = reversed(route[i:j+1])
-        
-        else:  # Insert/remove client
-            if random.random() < 0.5 and neighbor:  # Remove
-                route = random.choice(neighbor)
-                if len(route) > 3:
-                    pos = random.randrange(1, len(route) - 1)
-                    route.pop(pos)
-            else:  # Insert
-                used_clients = set(c for route in neighbor for c in route[1:-1])
-                available = set(self.clients) - used_clients
-                if available and neighbor:
-                    client = random.choice(list(available))
+        try:
+            if move_type < 0.3 and len(neighbor) >= 2:
+                # Inter-route swap with constraint checking
+                route1, route2 = random.sample(neighbor, 2)
+                if len(route1) > 3 and len(route2) > 3:
+                    pos1 = random.randrange(1, len(route1) - 1)
+                    pos2 = random.randrange(1, len(route2) - 1)
+                    
+                    # Temporary swap to check feasibility
+                    client1, client2 = route1[pos1], route2[pos2]
+                    route1[pos1], route2[pos2] = route2[pos2], route1[pos1]
+                    
+                    # Check if both routes remain feasible
+                    if not (self._validate_route(route1) and self._validate_route(route2)):
+                        # Revert swap if infeasible
+                        route1[pos1], route2[pos2] = client1, client2
+            
+            elif move_type < 0.6:
+                # Intra-route 2-opt with feasibility check
+                if neighbor:
                     route = random.choice(neighbor)
-                    pos = random.randrange(1, len(route))
-                    route.insert(pos, client)
+                    if len(route) > 4:
+                        i = random.randrange(1, len(route) - 2)
+                        j = random.randrange(i + 1, len(route) - 1)
+                        new_route = route[:i] + list(reversed(route[i:j+1])) + route[j+1:]
+                        
+                        if self._validate_route(new_route):
+                            route[:] = new_route
+            
+            else:
+                # Insert/remove with constraint checking
+                if random.random() < 0.5 and neighbor:  # Remove
+                    route = random.choice(neighbor)
+                    if len(route) > 3:
+                        pos = random.randrange(1, len(route) - 1)
+                        route.pop(pos)
+                else:  # Insert
+                    used_clients = self._get_used_clients(neighbor)
+                    available = [c for c in self.clients if c.id not in used_clients]
+                    
+                    if available and neighbor:
+                        route = random.choice(neighbor)
+                        client = random.choice(available)
+                        
+                        # Try different insertion positions
+                        for pos in range(1, len(route)):
+                            temp_route = route[:pos] + [client] + route[pos:]
+                            if self._validate_route(temp_route):
+                                route[:] = temp_route
+                                break
         
+        except (IndexError, ValueError, KeyError):
+            return solution
+            
         return neighbor
 
+    def _calculate_solution_quality(self, solution):
+        """Calculate solution quality ensuring all constraints are respected"""
+        if not solution:
+            return 0
+            
+        total_profit = 0
+        total_distance = 0
+        used_clients = set()
+        
+        for route in solution:
+            route_profit = 0
+            route_distance = 0
+            route_clients = set()
+            
+            # Calculate route metrics
+            for i in range(len(route) - 1):
+                route_distance += self.distances[route[i].id][route[i+1].id]
+                if i > 0:
+                    client_id = route[i].id
+                    if client_id not in used_clients:
+                        route_profit += route[i].profit
+                        route_clients.add(client_id)
+            
+            # Only count route if it's feasible
+            if route_distance <= self.L:
+                total_profit += route_profit
+                total_distance += route_distance
+                used_clients.update(route_clients)
+            else:
+                return 0  # Invalid solution if any route exceeds L
+        
+        # Calculate solution quality metrics
+        coverage = len(used_clients) / len(self.clients)
+        efficiency = 1 - (total_distance / (self.L * self.m))
+        
+        return total_profit * (1 + 0.15 * coverage + 0.1 * efficiency)
+
     def _local_search(self, solution):
-        if not solution: return solution
+        """Improved local search with strict constraint checking"""
+        if not solution:
+            return solution
+        
         max_local_time = self.max_runtime * 0.1
         start_time = time.time()
         improved = True
+        
         while improved and time.time() - start_time <= max_local_time:
             improved = False
+            
             for route_idx, route in enumerate(solution):
-                if len(route) <= 4: continue
-                best_length = sum(self.distances[route[i].id][route[i+1].id] 
-                                for i in range(len(route)-1))
-                for i in range(1, len(route)-2):
-                    if time.time() - start_time > max_local_time: break
-                    for j in range(i+1, min(i+5, len(route)-1)):
+                if len(route) <= 4:
+                    continue
+                    
+                current_length = self._get_route_length(route)
+                
+                for i in range(1, len(route) - 2):
+                    if time.time() - start_time > max_local_time:
+                        break
+                        
+                    for j in range(i + 1, min(i + 5, len(route) - 1)):
                         new_route = route[:i] + list(reversed(route[i:j+1])) + route[j+1:]
-                        new_length = sum(self.distances[new_route[k].id][new_route[k+1].id] 
-                                       for k in range(len(new_route)-1))
-                        if new_length < best_length and new_length <= self.L:
+                        new_length = self._get_route_length(new_route)
+                        
+                        if new_length < current_length and new_length <= self.L:
                             solution[route_idx] = new_route
+                            current_length = new_length
                             improved = True
                             break
-                    if improved: break
+                    
+                    if improved:
+                        break
+        
         return solution
 
     def solve(self):
+        """Main solving method with improved constraint handling"""
         start_time = time.time()
         current_solution = self._create_initial_solution()
         current_quality = self._calculate_solution_quality(current_solution)
+        
         self.best_solution = copy.deepcopy(current_solution)
         self.best_fitness = current_quality
         
@@ -828,16 +935,15 @@ class SimulatedAnnealingTOP:
             iteration_qualities = []
             
             for _ in range(self.iterations_per_temp):
-                if time.time() - start_time > self.max_runtime: break
-                
-                neighbor = self._generate_neighbor(current_solution)
-                if iteration % 10 == 0:
-                    neighbor = self._local_search(neighbor)
+                if time.time() - start_time > self.max_runtime:
+                    break
                     
+                neighbor = self._generate_neighbor(current_solution)
                 neighbor_quality = self._calculate_solution_quality(neighbor)
                 iteration_qualities.append(neighbor_quality)
-                delta = neighbor_quality - current_quality
                 
+                # Decide whether to accept the neighbor
+                delta = neighbor_quality - current_quality
                 if delta > 0 or random.random() < math.exp(delta / temp):
                     current_solution = neighbor
                     current_quality = neighbor_quality
@@ -849,6 +955,7 @@ class SimulatedAnnealingTOP:
                 
                 total_moves += 1
             
+            # Update statistics
             avg_fitness = sum(iteration_qualities) / len(iteration_qualities)
             acceptance_rate = accepted_moves / max(1, total_moves)
             
@@ -871,6 +978,7 @@ class SimulatedAnnealingTOP:
         return self.best_solution
 
     def get_stats(self):
+        """Return statistics as a pandas DataFrame"""
         return pd.DataFrame(self.stats_data)
 
 def lire_instance_chao(nom_fichier):
@@ -1147,7 +1255,7 @@ if __name__ == "__main__":
     
     # Set flags for what to run
     RUN_SYMMETRIC = True       # Set to False to skip symmetric instances
-    RUN_NON_SYMMETRIC = False  # Set to False to skip non-symmetric instances
+    RUN_NON_SYMMETRIC = True  # Set to False to skip non-symmetric instances
     DEBUG = True              # Set to False to disable debug output
     
     print(f"\nRunning benchmark with settings:")
