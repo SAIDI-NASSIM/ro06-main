@@ -13,6 +13,9 @@ from dataclasses import dataclass
 from typing import List, Set, Dict, Tuple
 import os 
 import glob
+from itertools import zip_longest
+
+
 
 
 class Client:
@@ -41,13 +44,10 @@ class GreedyTOP:
         
         # Statistics collection (for consistency with other algorithms)
         self.stats_data = {
-            'iteration': [], 
-            'best_fitness': [], 
-            'avg_fitness': [], 
-            'diversity': [], 
-            'pheromone_avg': [], 
-            'pheromone_max': [], 
-            'pheromone_min': []
+            'iteration': [0],
+            'best_fitness': [0],
+            'avg_fitness': [0],
+            'diversity': [0]
         }
     
     def _precompute_distances(self):
@@ -202,7 +202,7 @@ class AntColonyTOP:
         self.best_solution = None
         self.best_fitness = float('-inf')
         self.iteration_best_solutions = []
-        self.stats_data = {'iteration': [], 'best_fitness': [], 'avg_fitness': [], 'diversity': [], 'pheromone_avg': [], 'pheromone_max': [], 'pheromone_min': [], 'colony_performance': [[] for _ in range(self.n_colonies)]}
+        self.stats_data = {'iteration': [], 'best_fitness': [], 'avg_fitness': [], 'diversity': [], 'pheromone_avg': [], 'pheromone_max': [], 'pheromone_min': []}
 
     def _initialize_pheromone_matrices(self):
         matrices = []
@@ -528,8 +528,7 @@ class AntColonyTOP:
             self.stats_data['pheromone_avg'].append(statistics.mean(pheromone_values))
             self.stats_data['pheromone_max'].append(max(pheromone_values))
             self.stats_data['pheromone_min'].append(min(pheromone_values))
-            for colony_idx in range(self.n_colonies):
-                self.stats_data['colony_performance'][colony_idx].append(colony_qualities[colony_idx][-1])
+
             if self.debug and iteration % 10 == 0:
                 print(f"\nIteration {iteration}:")
                 print(f"  Best Fitness = {self.best_fitness:.2f}")
@@ -544,22 +543,318 @@ class AntColonyTOP:
         return self.best_solution
 
     def get_stats(self):
-        # Keep only the main statistics
-        stats_dict = {
-            'iteration': self.stats_data['iteration'],
-            'best_fitness': self.stats_data['best_fitness'],
-            'avg_fitness': self.stats_data['avg_fitness'],
-            'diversity': self.stats_data['diversity'],
-            'pheromone_avg': self.stats_data['pheromone_avg'],
-            'pheromone_max': self.stats_data['pheromone_max'],
-            'pheromone_min': self.stats_data['pheromone_min']
-        }
+        """Return collected statistics as a pandas DataFrame."""
+        return pd.DataFrame(self.stats_data)
+
+##############################################################################################################################################################################
+class GeneticTOP:
+    def __init__(self, start_point, end_point, clients, m, L, debug=False):
+        self.start_point = start_point
+        self.end_point = end_point
+        self.clients = clients
+        self.m = m  # Number of vehicles
+        self.L = L  # Time limit per route
+        self.debug = debug
         
-        return pd.DataFrame(stats_dict)
+        n = len(clients)
+        # Slightly adjusted population parameters for better balance
+        self.population_size = min(150, n * 3)  # Reduced size for efficiency
+        self.generations = min(250, n * 8)      # Reduced but still effective
+        
+        # Enhanced genetic parameters
+        self.crossover_rate = 0.85
+        self.mutation_rate = 0.25  # Slightly reduced for more stability
+        self.elite_size = max(2, self.population_size // 15)  # Slightly increased elite preservation
+        self.tournament_size = max(4, self.population_size // 15)  # Increased selection pressure
+        
+        # Solution tracking (unchanged)
+        self.best_solution = None
+        self.best_fitness = float('-inf')
+        self.generations_without_improvement = 0
+        self.max_stagnation = max(40, n // 2)  # Slightly reduced for faster convergence
+        
+        # Enhanced distance computation
+        self.distances = self._precompute_distances()
+        
+        # Statistics collection (unchanged)
+        self.stats_data = {
+            'iteration': [],
+            'best_fitness': [],
+            'avg_fitness': [],
+            'diversity': [],
+            'mutation_rate': [],
+            'crossover_rate': [],
+            'tournament_size': [],
+            'generations_without_improvement': []
+        }
 
+    def _precompute_distances(self):
+        """Optimized distance precomputation."""
+        distances = {}
+        all_points = [self.start_point] + self.clients + [self.end_point]
+        for i, p1 in enumerate(all_points):
+            for p2 in all_points[i:]:  # Only compute half, use symmetry
+                dist = ((p1.x - p2.x)**2 + (p1.y - p2.y)**2)**0.5
+                distances[(p1.id, p2.id)] = distances[(p2.id, p1.id)] = dist
+        return distances
 
+    def _create_initial_solution(self):
+        """Enhanced initial solution creation."""
+        solution = []
+        available_clients = set(self.clients)
+        
+        for _ in range(self.m):
+            if not available_clients:
+                break
+                
+            route = [self.start_point]
+            current_time = 0
+            current = self.start_point
+            
+            # Enhanced client selection
+            while available_clients:
+                best_client = None
+                best_score = -1
+                
+                # Consider only closest neighbors for efficiency
+                candidates = sorted(available_clients, 
+                                 key=lambda c: self.distances[(current.id, c.id)])[:10]
+                
+                for client in candidates:
+                    time_to_client = self.distances[(current.id, client.id)]
+                    time_to_end = self.distances[(client.id, self.end_point.id)]
+                    total_time = current_time + time_to_client + time_to_end
+                    
+                    if total_time <= self.L:
+                        # Enhanced scoring function
+                        score = (client.profit / (time_to_client + 0.1)) * \
+                               (1 + 0.5 * (1 - total_time/self.L))  # Favor time-efficient choices
+                        if score > best_score:
+                            best_score = score
+                            best_client = client
+                
+                if best_client is None:
+                    break
+                    
+                route.append(best_client)
+                current_time += self.distances[(current.id, best_client.id)]
+                current = best_client
+                available_clients.remove(best_client)
+            
+            if len(route) > 1:
+                route.append(self.end_point)
+                solution.append(route)
+        
+        return solution
 
+    def _evaluate_solution(self, solution):
+        """Optimized solution evaluation."""
+        if not solution:
+            return 0
+        
+        total_profit = 0
+        total_time = 0
+        used_clients = set()
+        
+        for route in solution:
+            if len(route) < 2:
+                continue
+                
+            route_time = sum(self.distances[(route[i].id, route[i + 1].id)] 
+                           for i in range(len(route) - 1))
+            
+            if route_time > self.L:
+                continue
+            
+            route_clients = set(c.id for c in route[1:-1])
+            if not (route_clients & used_clients):  # No duplicates
+                total_time += route_time
+                used_clients.update(route_clients)
+                total_profit += sum(c.profit for c in route[1:-1])
+        
+        if total_time > self.L * self.m:
+            return 0
+        
+        coverage_ratio = len(used_clients) / len(self.clients)
+        time_efficiency = 1 - (total_time / (self.L * self.m))
+        
+        return total_profit * (1 + 0.15 * coverage_ratio + 0.1 * time_efficiency)
 
+    def _crossover(self, parent1, parent2):
+        """Enhanced crossover with better route preservation."""
+        if random.random() > self.crossover_rate:
+            return copy.deepcopy(parent1), copy.deepcopy(parent2)
+        
+        child1, child2 = [], []
+        used_clients1, used_clients2 = set(), set()
+        
+        # Evaluate and sort routes by profit/time ratio
+        routes1 = [(r, sum(c.profit for c in r[1:-1]) / 
+                   sum(self.distances[(r[i].id, r[i+1].id)] for i in range(len(r)-1)))
+                  for r in parent1]
+        routes2 = [(r, sum(c.profit for c in r[1:-1]) / 
+                   sum(self.distances[(r[i].id, r[i+1].id)] for i in range(len(r)-1)))
+                  for r in parent2]
+        
+        routes1.sort(key=lambda x: x[1], reverse=True)
+        routes2.sort(key=lambda x: x[1], reverse=True)
+        
+        # Inherit best routes first
+        for route, _ in routes1:
+            route_clients = set(c.id for c in route[1:-1])
+            if not (route_clients & used_clients1) and len(child1) < self.m:
+                child1.append(copy.deepcopy(route))
+                used_clients1.update(route_clients)
+        
+        for route, _ in routes2:
+            route_clients = set(c.id for c in route[1:-1])
+            if not (route_clients & used_clients2) and len(child2) < self.m:
+                child2.append(copy.deepcopy(route))
+                used_clients2.update(route_clients)
+        
+        return child1, child2
+
+    def _mutation(self, solution):
+        """Enhanced mutation with better local improvements."""
+        if random.random() > self.mutation_rate or not solution:
+            return solution
+        
+        mutated = copy.deepcopy(solution)
+        
+        # Apply two different mutation operators
+        for _ in range(2):
+            if random.random() < 0.5 and len(mutated) >= 2:
+                # Inter-route swap
+                route1, route2 = random.sample(mutated, 2)
+                if len(route1) > 3 and len(route2) > 3:
+                    pos1 = random.randrange(1, len(route1) - 1)
+                    pos2 = random.randrange(1, len(route2) - 1)
+                    
+                    # Only swap if it improves or maintains route quality
+                    original_quality = (self._evaluate_route(route1) + 
+                                     self._evaluate_route(route2))
+                    
+                    route1[pos1], route2[pos2] = route2[pos2], route1[pos1]
+                    
+                    new_quality = (self._evaluate_route(route1) + 
+                                 self._evaluate_route(route2))
+                    
+                    if new_quality < original_quality:
+                        route1[pos1], route2[pos2] = route2[pos2], route1[pos1]
+            else:
+                # Intra-route optimization
+                if mutated:
+                    route = random.choice(mutated)
+                    if len(route) > 4:
+                        i = random.randrange(1, len(route) - 2)
+                        j = random.randrange(i + 1, len(route) - 1)
+                        if random.random() < 0.5:
+                            # Reverse segment
+                            route[i:j+1] = reversed(route[i:j+1])
+                        else:
+                            # Relocate client
+                            client = route.pop(i)
+                            new_pos = random.randrange(1, len(route))
+                            route.insert(new_pos, client)
+        
+        return mutated
+
+    def _evaluate_route(self, route):
+        """Helper function to evaluate single route quality."""
+        if len(route) < 3:
+            return 0
+        
+        route_time = sum(self.distances[(route[i].id, route[i+1].id)] 
+                        for i in range(len(route)-1))
+        
+        if route_time > self.L:
+            return 0
+            
+        return sum(c.profit for c in route[1:-1]) / route_time
+    def _tournament_selection(self, population, fitnesses):
+        """Tournament selection with diversity consideration."""
+        tournament_indices = random.sample(range(len(population)), self.tournament_size)
+        tournament_fitness = [fitnesses[i] for i in tournament_indices]
+        winner_idx = tournament_indices[tournament_fitness.index(max(tournament_fitness))]
+        return copy.deepcopy(population[winner_idx])
+    def evolve(self):
+        """Enhanced evolution process."""
+        # Create initial population
+        population = [self._create_initial_solution() for _ in range(self.population_size)]
+        
+        for generation in range(self.generations):
+            # Evaluate population
+            fitnesses = [self._evaluate_solution(solution) for solution in population]
+            
+            # Update best solution
+            max_fitness_idx = fitnesses.index(max(fitnesses))
+            if fitnesses[max_fitness_idx] > self.best_fitness:
+                self.best_fitness = fitnesses[max_fitness_idx]
+                self.best_solution = copy.deepcopy(population[max_fitness_idx])
+                self.generations_without_improvement = 0
+            else:
+                self.generations_without_improvement += 1
+            
+            # Update statistics
+            self._update_stats(generation, fitnesses,population)
+            
+            # Early stopping check
+            if (self.generations_without_improvement > self.max_stagnation and 
+                generation > self.generations // 4):
+                if self.debug:
+                    print(f"\nEarly stopping at generation {generation}")
+                break
+            
+            # Create new population with elitism
+            sorted_indices = sorted(range(len(fitnesses)), 
+                                 key=lambda k: fitnesses[k], reverse=True)
+            new_population = [copy.deepcopy(population[i]) 
+                            for i in sorted_indices[:self.elite_size]]
+            
+            # Fill rest of population
+            while len(new_population) < self.population_size:
+                # Tournament selection
+                parent1 = self._tournament_selection(population, fitnesses)
+                parent2 = self._tournament_selection(population, fitnesses)
+                
+                # Create and mutate offspring
+                child1, child2 = self._crossover(parent1, parent2)
+                child1, child2 = self._mutation(child1), self._mutation(child2)
+                
+                new_population.append(child1)
+                if len(new_population) < self.population_size:
+                    new_population.append(child2)
+            
+            population = new_population
+        
+        return self.best_solution
+
+    def _update_stats(self, generation, fitnesses,population):
+        """Update statistics data."""
+        avg_fitness = sum(fitnesses) / len(fitnesses)
+        diversity = len(set(str(s) for s in population)) / self.population_size
+        
+        self.stats_data['iteration'].append(generation)
+        self.stats_data['best_fitness'].append(self.best_fitness)
+        self.stats_data['avg_fitness'].append(avg_fitness)
+        self.stats_data['diversity'].append(diversity)
+        self.stats_data['mutation_rate'].append(self.mutation_rate)
+        self.stats_data['crossover_rate'].append(self.crossover_rate)
+        self.stats_data['tournament_size'].append(self.tournament_size)
+        self.stats_data['generations_without_improvement'].append(
+            self.generations_without_improvement)
+        
+        if self.debug and generation % 10 == 0:
+            print(f"\nGeneration {generation}:")
+            print(f"  Best Fitness = {self.best_fitness:.2f}")
+            print(f"  Average Fitness = {avg_fitness:.2f}")
+            print(f"  Diversity = {diversity:.3f}")
+
+    def get_stats(self):
+        """Return statistics as DataFrame."""
+        return pd.DataFrame(self.stats_data)
+
+######################################################################################################################################################################################
 def lire_instance_chao(nom_fichier):
     with open(nom_fichier, "r") as f:
         lines = f.readlines()
@@ -690,9 +985,9 @@ def main(instance_file, debug=False):
     # Run algorithms and collect results
     algorithms = [
         ('GreedyTOP', GreedyTOP(start_point, end_point, clients, m, L, debug=debug)),
+        ('GeneticTOP', GeneticTOP(start_point, end_point, clients, m, L, debug=debug)),
         ('AntColonyTOP', AntColonyTOP(start_point, end_point, clients, m, L, debug=debug))
         # ('SimulatedAnnealingTOP', SimulatedAnnealingTOP(start_point, end_point, clients, m, L, debug=debug)),
-        # ('GeneticTOP', GeneticTOP(start_point, end_point, clients, m, L, debug=debug))
     ]
     
     results = []
@@ -700,11 +995,10 @@ def main(instance_file, debug=False):
         print(f"\nRunning {name}...")
         
         start_time = time.time()
-        # if isinstance(algorithm, GeneticTOP):
-        #     solution = algorithm.evolve()
-        # else:
-        #     solution = algorithm.solve()
-        solution = algorithm.solve()
+        if isinstance(algorithm, GeneticTOP):
+            solution = algorithm.evolve()
+        else:
+            solution = algorithm.solve()
         execution_time = time.time() - start_time
         
         # Get algorithm-specific statistics
@@ -886,14 +1180,14 @@ if __name__ == "__main__":
              "Set_64_234/p6.4.n.txt"
          ]
      }
+     main("Set_100_234/p4.4.t.txt", debug=True)
      # Run main for all instance files
     #  for size, files in non_symmetric_files.items():
     #      print(f"\nRunning non-symmetric test set ({size} time constraint instances):")
     #      for instance_file in files:
     #          main(instance_file, debug=True)
-     for size, files in symmetric_files.items():
-         print(f"\nRunning symmetric test set ({size} time constraint instances):")
-         for instance_file in files:
-             main(instance_file, debug=True)
-
+    #  for size, files in symmetric_files.items():
+    #      print(f"\nRunning symmetric test set ({size} time constraint instances):")
+    #      for instance_file in files:
+    #          main(instance_file, debug=True)
 
