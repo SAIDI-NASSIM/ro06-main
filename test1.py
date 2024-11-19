@@ -987,7 +987,7 @@ def main(instance_file, debug=False):
         ('GreedyTOP', GreedyTOP(start_point, end_point, clients, m, L, debug=debug)),
         ('GeneticTOP', GeneticTOP(start_point, end_point, clients, m, L, debug=debug)),
         ('AntColonyTOP', AntColonyTOP(start_point, end_point, clients, m, L, debug=debug))
-        # ('SimulatedAnnealingTOP', SimulatedAnnealingTOP(start_point, end_point, clients, m, L, debug=debug)),
+        # ,('SimulatedAnnealingTOP', SimulatedAnnealingTOP(start_point, end_point, clients, m, L, debug=debug))
     ]
     
     results = []
@@ -1180,14 +1180,14 @@ if __name__ == "__main__":
              "Set_64_234/p6.4.n.txt"
          ]
      }
-     main("Set_100_234/p4.4.t.txt", debug=True)
-     # Run main for all instance files
-    #  for size, files in non_symmetric_files.items():
-    #      print(f"\nRunning non-symmetric test set ({size} time constraint instances):")
-    #      for instance_file in files:
-    #          main(instance_file, debug=True)
-    #  for size, files in symmetric_files.items():
-    #      print(f"\nRunning symmetric test set ({size} time constraint instances):")
-    #      for instance_file in files:
-    #          main(instance_file, debug=True)
+    #  Run main for all instance files
+     for size, files in symmetric_files.items():
+        print(f"\nRunning symmetric test set ({size} time constraint instances):")
+        for instance_file in files:
+             main(instance_file, debug=True)
+     for size, files in non_symmetric_files.items():
+         print(f"\nRunning non-symmetric test set ({size} time constraint instances):")
+         for instance_file in files:
+             main(instance_file, debug=True)
+
 
