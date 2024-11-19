@@ -1,2 +1,0 @@
-Execution_Time,Best_Fitness,Total_Profit,Unique_Clients_Visited,Total_Available_Clients,Coverage_Ratio,Number_of_Routes,Routes_Exceeding_TimeLimit,Avg_Route_Time,Route_Time_Std,Time_Efficiency,Constraints_Respected,Algorithm,Instance,Timestamp
-0.9880423545837402,145.78158234243872,144.0,8,98,0.08163265306122448,2,0,24.96819958972864,0.00543750463975151,0.001272016410854393,True,SimulatedAnnealing,p4.2.a,2024-11-19 21:57:52

@@ -1,2 +1,0 @@
-Execution_Time,Best_Fitness,Total_Profit,Unique_Clients_Visited,Coverage_Ratio,Number_of_Routes,Routes_Exceeding_TimeLimit,Avg_Route_Time,Route_Time_Std,Time_Efficiency,Constraints_Respected,Algorithm,Instance,Timestamp
-24.07287359237671,246.83150987693452,239.0,21,0.21428571428571427,2,0,69.56252337299499,0.23736889407920728,0.006249666100071605,True,Baseline,p4.2.j,2024-11-19 21:45:58

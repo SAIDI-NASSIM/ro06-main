@@ -1,8 +1,16 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+import os
+
+def create_results_folder():
+    # Create results folder if it doesn't exist
+    if not os.path.exists('result_plots'):
+        os.makedirs('result_plots')
 
 def analyze_benchmark_extended(csv_file):
+    create_results_folder()
+    
     # Read the CSV file
     df = pd.read_csv(csv_file)
     
@@ -31,7 +39,6 @@ def analyze_benchmark_extended(csv_file):
         'min': 'Minimum Performance'
     }
     
-    # Colors for algorithms
     colors = {
         'Baseline': '#8884d8',
         'SimulatedAnnealing': '#82ca9d',
@@ -43,7 +50,6 @@ def analyze_benchmark_extended(csv_file):
         bar_width = 0.2
         x = range(len(data))
         
-        # Plot bars for each algorithm
         for i, (algo, color) in enumerate(colors.items()):
             ax.bar(
                 [xi + (i-1.5)*bar_width for xi in x], 
@@ -53,7 +59,6 @@ def analyze_benchmark_extended(csv_file):
                 color=color
             )
         
-        # Customize each subplot
         ax.set_xlabel('Instance Category')
         ax.set_ylabel('Fitness Score')
         ax.set_title(f'{titles[metric]} by Instance Category')
@@ -66,7 +71,7 @@ def analyze_benchmark_extended(csv_file):
         ax.grid(True, alpha=0.3)
     
     plt.tight_layout()
-    plt.savefig('performance_metrics.png', dpi=300, bbox_inches='tight')
+    plt.savefig('result_plots/performance_metrics.png', dpi=300, bbox_inches='tight')
     plt.close()
 
     # Create box plot
@@ -81,18 +86,23 @@ def analyze_benchmark_extended(csv_file):
     plt.xticks(rotation=45)
     plt.title('Performance Distribution by Algorithm and Instance Type')
     plt.tight_layout()
-    plt.savefig('performance_distribution.png', dpi=300, bbox_inches='tight')
+    plt.savefig('result_plots/performance_distribution.png', dpi=300, bbox_inches='tight')
     plt.close()
 
     return plot_data
 
 def plot_routes_performance(csv_file):
+    create_results_folder()
+    
     # Read the CSV file
     df = pd.read_csv(csv_file)
     
-    # Create subplots for each size category
+    # Create subplots for each size category and set type combination
     size_categories = df['Size_Category'].unique()
-    fig, axes = plt.subplots(len(size_categories), 1, figsize=(15, 6*len(size_categories)))
+    set_types = df['Set_Type'].unique()
+    
+    fig, axes = plt.subplots(len(size_categories), len(set_types), 
+                            figsize=(15*len(set_types), 6*len(size_categories)))
     
     colors = {
         'Baseline': '#8884d8',
@@ -101,51 +111,55 @@ def plot_routes_performance(csv_file):
         'AntColony': '#ff7300'
     }
     
-    for idx, size in enumerate(size_categories):
-        ax = axes[idx] if len(size_categories) > 1 else axes
-        size_data = df[df['Size_Category'] == size]
-        
-        for algorithm in colors.keys():
-            algo_data = size_data[size_data['Algorithm'] == algorithm]
-            # Sort by number of routes and fitness
-            algo_data = algo_data.sort_values(['Number_of_Routes', 'Best_Fitness'])
+    for i, size in enumerate(size_categories):
+        for j, set_type in enumerate(set_types):
+            ax = axes[i][j] if len(size_categories) > 1 and len(set_types) > 1 else axes
+            instance_data = df[(df['Size_Category'] == size) & (df['Set_Type'] == set_type)]
             
-            ax.scatter(
-                algo_data['Number_of_Routes'],
-                algo_data['Best_Fitness'],
-                label=algorithm,
-                color=colors[algorithm],
-                alpha=0.7,
-                s=100
-            )
-            
-            # Add trend line
-            if len(algo_data) > 1:
-                ax.plot(
+            for algorithm in colors.keys():
+                algo_data = instance_data[instance_data['Algorithm'] == algorithm]
+                algo_data = algo_data.sort_values(['Number_of_Routes', 'Best_Fitness'])
+                
+                ax.scatter(
                     algo_data['Number_of_Routes'],
                     algo_data['Best_Fitness'],
+                    label=algorithm,
                     color=colors[algorithm],
-                    alpha=0.3
+                    alpha=0.7,
+                    s=100
                 )
-        
-        ax.set_title(f'Performance vs Number of Routes - {size} instances')
-        ax.set_xlabel('Number of Routes')
-        ax.set_ylabel('Best Fitness')
-        ax.grid(True, alpha=0.3)
-        ax.legend()
+                
+                if len(algo_data) > 1:
+                    ax.plot(
+                        algo_data['Number_of_Routes'],
+                        algo_data['Best_Fitness'],
+                        color=colors[algorithm],
+                        alpha=0.3
+                    )
+            
+            ax.set_title(f'Performance vs Routes - {size} {set_type} instances')
+            ax.set_xlabel('Number of Routes')
+            ax.set_ylabel('Best Fitness')
+            ax.grid(True, alpha=0.3)
+            ax.legend()
     
     plt.tight_layout()
-    plt.savefig('routes_performance.png', dpi=300, bbox_inches='tight')
+    plt.savefig('result_plots/routes_performance.png', dpi=300, bbox_inches='tight')
     plt.close()
 
-    # Print summary statistics for routes
-    print("\nRoutes Analysis:")
-    route_stats = df.groupby(['Size_Category', 'Algorithm'])[['Number_of_Routes', 'Best_Fitness']].agg({
+    # Generate detailed statistics and save to CSV
+    route_stats = df.groupby(['Set_Type', 'Size_Category', 'Algorithm'])[
+        ['Number_of_Routes', 'Best_Fitness']
+    ].agg({
         'Number_of_Routes': ['mean', 'min', 'max'],
         'Best_Fitness': ['mean', 'min', 'max']
     }).round(2)
+    
+    # Save statistics to CSV
+    route_stats.to_csv('result_plots/route_statistics.csv')
+    print("\nRoutes Analysis saved to 'result_plots/route_statistics.csv'")
     print(route_stats)
 
-
-analyze_benchmark_extended('benchmark_results_20241119_215537/complete_benchmark_summary.csv')
-plot_routes_performance('benchmark_results_20241119_215537/complete_benchmark_summary.csv')
+# Example usage:
+analyze_benchmark_extended('benchmark_results_20241119_225823/complete_benchmark_summary.csv')
+plot_routes_performance('benchmark_results_20241119_225823/complete_benchmark_summary.csv')
