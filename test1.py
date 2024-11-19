@@ -41,10 +41,13 @@ class GreedyTOP:
         
         # Statistics collection (for consistency with other algorithms)
         self.stats_data = {
-            'iteration': [0],
-            'best_fitness': [0],
-            'avg_fitness': [0],
-            'diversity': [0]
+            'iteration': [], 
+            'best_fitness': [], 
+            'avg_fitness': [], 
+            'diversity': [], 
+            'pheromone_avg': [], 
+            'pheromone_max': [], 
+            'pheromone_min': []
         }
     
     def _precompute_distances(self):
@@ -541,39 +544,18 @@ class AntColonyTOP:
         return self.best_solution
 
     def get_stats(self):
-        # First, find the minimum length across all arrays
-        min_length = min(
-            len(self.stats_data['iteration']),
-            len(self.stats_data['best_fitness']),
-            len(self.stats_data['avg_fitness']),
-            len(self.stats_data['diversity']),
-            len(self.stats_data['pheromone_avg']),
-            len(self.stats_data['pheromone_max']),
-            len(self.stats_data['pheromone_min'])
-        )
-        
-        # Truncate all arrays to the minimum length
+        # Keep only the main statistics
         stats_dict = {
-            'iteration': self.stats_data['iteration'][:min_length],
-            'best_fitness': self.stats_data['best_fitness'][:min_length],
-            'avg_fitness': self.stats_data['avg_fitness'][:min_length],
-            'diversity': self.stats_data['diversity'][:min_length],
-            'pheromone_avg': self.stats_data['pheromone_avg'][:min_length],
-            'pheromone_max': self.stats_data['pheromone_max'][:min_length],
-            'pheromone_min': self.stats_data['pheromone_min'][:min_length]
+            'iteration': self.stats_data['iteration'],
+            'best_fitness': self.stats_data['best_fitness'],
+            'avg_fitness': self.stats_data['avg_fitness'],
+            'diversity': self.stats_data['diversity'],
+            'pheromone_avg': self.stats_data['pheromone_avg'],
+            'pheromone_max': self.stats_data['pheromone_max'],
+            'pheromone_min': self.stats_data['pheromone_min']
         }
         
-        # Add colony performance data
-        for i in range(self.n_colonies):
-            colony_data = self.stats_data['colony_performance'][i][:min_length]
-            # Pad with NaN if necessary
-            if len(colony_data) < min_length:
-                colony_data = colony_data + [float('nan')] * (min_length - len(colony_data))
-            stats_dict[f'colony_{i}_performance'] = colony_data
-        
-        # Create DataFrame with synchronized lengths
-        stats_df = pd.DataFrame(stats_dict)
-        return stats_df
+        return pd.DataFrame(stats_dict)
 
 
 
