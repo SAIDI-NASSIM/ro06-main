@@ -711,27 +711,20 @@ class GeneticTOP:
         self.start_point = start_point
         self.end_point = end_point
         self.clients = clients
-        self.m = m
-        self.L = L
+        self.m = m  # Number of vehicles
+        self.L = L  # Time limit per route
         self.debug = debug
         
         n = len(clients)
-        
-        # Dynamic population size and generation parameters
+        # Population parameters
         self.population_size = min(200, n * 4)
         self.generations = min(300, n * 10)
         
-        # Adaptive parameters
+        # Genetic parameters
         self.crossover_rate = 0.85
         self.mutation_rate = 0.3
-        self.elite_size = max(2, self.population_size // 25)
-        
-        # Tournament selection parameters
+        self.elite_size = max(2, self.population_size // 20)
         self.tournament_size = max(3, self.population_size // 20)
-        
-        # Diversity maintenance parameters
-        self.diversity_threshold = 0.2
-        self.similarity_penalty = 0.15
         
         # Solution tracking
         self.best_solution = None
@@ -739,11 +732,8 @@ class GeneticTOP:
         self.generations_without_improvement = 0
         self.max_stagnation = max(50, n // 2)
         
-        # Precompute distances for efficiency
+        # Precompute distances
         self.distances = self._precompute_distances()
-        
-        # Population diversity metrics
-        self.population_entropy = 0
         
         # Statistics collection
         self.stats_data = {
@@ -756,8 +746,9 @@ class GeneticTOP:
             'tournament_size': [],
             'generations_without_improvement': []
         }
-        
+
     def _precompute_distances(self):
+        """Precompute distances between all points."""
         distances = {}
         all_points = [self.start_point] + self.clients + [self.end_point]
         for i, p1 in enumerate(all_points):
@@ -767,361 +758,279 @@ class GeneticTOP:
         return distances
 
     def get_distance(self, client1, client2):
+        """Get precomputed distance between two points."""
         return self.distances[(client1.id, client2.id)]
 
-    def _calculate_route_diversity(self, route1, route2):
-        if not route1 or not route2:
-            return 1.0
-        clients1 = set(c.id for c in route1[1:-1])
-        clients2 = set(c.id for c in route2[1:-1])
-        union = len(clients1.union(clients2))
-        if union == 0:
-            return 1.0
-        return 1.0 - len(clients1.intersection(clients2)) / union
-
-    def _calculate_population_diversity(self, population):
-        if not population:
-            return 0.0
-        total_diversity = 0
-        comparisons = 0
-        for i in range(len(population)):
-            for j in range(i + 1, len(population)):
-                solution_diversity = 0
-                valid_routes = 0
-                for route1 in population[i]:
-                    for route2 in population[j]:
-                        diversity = self._calculate_route_diversity(route1, route2)
-                        solution_diversity += diversity
-                        valid_routes += 1
-                if valid_routes > 0:
-                    total_diversity += solution_diversity / valid_routes
-                    comparisons += 1
-        return total_diversity / max(1, comparisons)
-
     def _create_initial_solution(self):
-        solution = []
+        """Create an initial solution using a clustered approach."""
+        # Initialize empty solution with m routes
+        solution = [[] for _ in range(self.m)]
         available_clients = set(self.clients)
-        max_attempts = 3  # Allow multiple attempts per route
         
-        for _ in range(self.m):
+        # For each route
+        for route_idx in range(self.m):
             if not available_clients:
                 break
                 
-            best_route = None
-            best_profit = -1
+            current_route = [self.start_point]
+            current_time = 0
+            current = self.start_point
             
-            for _ in range(max_attempts):
-                route = self._create_route(available_clients)
-                if route and len(route) > 2:
-                    profit = sum(c.profit for c in route[1:-1])
-                    if profit > best_profit:
-                        best_route = route
-                        best_profit = profit
+            # Try to add clients to current route
+            while available_clients:
+                # Find feasible clients
+                feasible = []
+                for client in available_clients:
+                    time_to_client = self.get_distance(current, client)
+                    time_to_end = self.get_distance(client, self.end_point)
+                    total_time = current_time + time_to_client + time_to_end
+                    
+                    if total_time <= self.L:
+                        score = client.profit / (time_to_client + 0.1)
+                        feasible.append((client, score))
+                
+                if not feasible:
+                    break
+                    
+                # Select client probabilistically based on score
+                total_score = sum(score for _, score in feasible)
+                if total_score <= 0:
+                    break
+                    
+                r = random.random() * total_score
+                cumsum = 0
+                selected = None
+                
+                for client, score in feasible:
+                    cumsum += score
+                    if cumsum >= r:
+                        selected = client
+                        break
+                
+                if not selected:
+                    selected = feasible[-1][0]
+                
+                # Add selected client to route
+                current_route.append(selected)
+                current_time += self.get_distance(current, selected)
+                current = selected
+                available_clients.remove(selected)
             
-            if best_route and len(best_route) > 2:
-                solution.append(best_route)
-                available_clients -= set(best_route[1:-1])
+            # Complete route
+            if len(current_route) > 1:  # Only add routes with clients
+                current_route.append(self.end_point)
+                solution[route_idx] = current_route
         
+        # Remove empty routes
+        solution = [route for route in solution if len(route) > 2]
         return solution
 
-    def _create_route(self, available_clients):
-        if not available_clients:
-            return [self.start_point, self.end_point]
-            
-        route = [self.start_point]
-        current_time = 0
-        local_clients = list(available_clients)
-        
-        # Randomize client selection with probability bias towards profit/distance ratio
-        while local_clients:
-            feasible_clients = []
-            for client in local_clients:
-                new_time = (current_time + 
-                           self.get_distance(route[-1], client) + 
-                           self.get_distance(client, self.end_point))
-                if new_time <= self.L:
-                    score = client.profit / (self.get_distance(route[-1], client) + 0.1)
-                    feasible_clients.append((client, score))
-                    
-            if not feasible_clients:
-                break
-                
-            # Randomized selection with bias towards better scores
-            total_score = sum(score for _, score in feasible_clients)
-            if total_score <= 0:
-                break
-                
-            r = random.random() * total_score
-            cumsum = 0
-            selected_client = None
-            
-            for client, score in feasible_clients:
-                cumsum += score
-                if cumsum >= r:
-                    selected_client = client
-                    break
-            
-            if not selected_client:
-                selected_client = feasible_clients[-1][0]
-                
-            route.append(selected_client)
-            local_clients.remove(selected_client)
-            current_time += self.get_distance(route[-2], selected_client)
-            
-        route.append(self.end_point)
-        return route if len(route) > 2 else [self.start_point, self.end_point]
-
-    def _adaptive_fitness(self, solution):
+    def _evaluate_solution(self, solution):
+        """Evaluate solution quality with penalties."""
         if not solution:
             return 0
         
-        total_profit = sum(sum(c.profit for c in route[1:-1]) for route in solution)
+        total_profit = 0
+        total_time = 0
+        used_clients = set()
         
-        # Calcul du temps total et pénalité graduelle
-        total_time = sum(sum(self.get_distance(route[i], route[i+1]) 
-                        for i in range(len(route)-1)) for route in solution)
-        time_penalty = 0
-        if total_time > self.L:
-            excess = total_time - self.L
-            time_penalty = (excess * 5) + (excess ** 2)
-        
-        # Pénalité pour distribution non uniforme des profits
-        route_profits = [sum(c.profit for c in route[1:-1]) for route in solution]
-        profit_std = statistics.stdev(route_profits) if len(route_profits) > 1 else 0
-        distribution_penalty = profit_std * 0.5
-        
-        # Bonus pour utilisation efficace du temps
-        time_efficiency = 1 - (total_time / (self.L * 1.2))
-        efficiency_bonus = max(0, time_efficiency * total_profit * 0.1)
-        
-        # Score final
-        fitness = (total_profit 
-                - time_penalty 
-                - distribution_penalty 
-                + efficiency_bonus)
-        
-        return max(0, fitness)
-    
-    def crossover(self, parent1, parent2):
-        """Crossover operator that maintains client uniqueness."""
-        if not parent1 or not parent2 or random.random() > self.crossover_rate:
-            return copy.deepcopy(parent1), copy.deepcopy(parent2)
+        for route in solution:
+            # Skip invalid routes
+            if len(route) < 2:
+                continue
+                
+            route_time = 0
+            route_profit = 0
+            route_clients = set()
             
+            # Calculate route metrics
+            for i in range(len(route) - 1):
+                route_time += self.get_distance(route[i], route[i + 1])
+                if i > 0:  # Skip start point
+                    client = route[i]
+                    route_profit += client.profit
+                    route_clients.add(client.id)
+            
+            # Apply penalties
+            if route_time > self.L:
+                continue  # Invalid route
+            
+            # Check for duplicates
+            if not route_clients & used_clients:  # No overlap with used clients
+                total_profit += route_profit
+                total_time += route_time
+                used_clients.update(route_clients)
+        
+        # Calculate final score with bonuses
+        if total_time > self.L * self.m:
+            return 0
+        
+        coverage_bonus = len(used_clients) / len(self.clients)
+        time_efficiency = 1 - (total_time / (self.L * self.m))
+        
+        return total_profit * (1 + 0.1 * coverage_bonus) * (1 + 0.1 * time_efficiency)
+
+    def _crossover(self, parent1, parent2):
+        """Route-based crossover operator."""
+        if random.random() > self.crossover_rate:
+            return copy.deepcopy(parent1), copy.deepcopy(parent2)
+        
         child1, child2 = [], []
         used_clients1, used_clients2 = set(), set()
         
-        # Determine crossover points
-        max_routes = max(len(parent1), len(parent2))
-        if max_routes < 2:
-            return copy.deepcopy(parent1), copy.deepcopy(parent2)
-            
-        start = random.randrange(max_routes)
-        end = random.randrange(start + 1, max_routes + 1)
+        # Randomly select routes to inherit
+        routes1 = random.sample(parent1, len(parent1) // 2)
+        routes2 = random.sample(parent2, len(parent2) // 2)
         
-        # First phase: Copy selected routes from parents if their clients haven't been used
-        for i in range(start, end):
-            # For child1: inherit from parent1
-            if i < len(parent1):
-                route = parent1[i]
-                route_clients = set(c.id for c in route[1:-1])
-                if not (route_clients & used_clients1):
-                    child1.append(copy.deepcopy(route))
-                    used_clients1.update(route_clients)
-            
-            # For child2: inherit from parent2
-            if i < len(parent2):
-                route = parent2[i]
-                route_clients = set(c.id for c in route[1:-1])
-                if not (route_clients & used_clients2):
-                    child2.append(copy.deepcopy(route))
-                    used_clients2.update(route_clients)
-        
-        # Second phase: Try to add remaining routes from opposite parent
-        remaining_routes1 = (parent2[:start] + parent2[end:] if start < len(parent2) else [])
-        remaining_routes2 = (parent1[:start] + parent1[end:] if start < len(parent1) else [])
-        
-        for route in remaining_routes1:
+        # Add selected routes to children if they don't create conflicts
+        for route in routes1:
             route_clients = set(c.id for c in route[1:-1])
-            if not (route_clients & used_clients1) and len(child1) < self.m:
+            if not (route_clients & used_clients1):
                 child1.append(copy.deepcopy(route))
                 used_clients1.update(route_clients)
         
-        for route in remaining_routes2:
+        for route in routes2:
             route_clients = set(c.id for c in route[1:-1])
-            if not (route_clients & used_clients2) and len(child2) < self.m:
+            if not (route_clients & used_clients2):
                 child2.append(copy.deepcopy(route))
                 used_clients2.update(route_clients)
         
+        # Add remaining feasible routes from opposite parent
+        remaining_routes1 = [r for r in parent2 if not any(c.id in used_clients1 for c in r[1:-1])]
+        remaining_routes2 = [r for r in parent1 if not any(c.id in used_clients2 for c in r[1:-1])]
+        
+        while len(child1) < self.m and remaining_routes1:
+            route = remaining_routes1.pop(random.randrange(len(remaining_routes1)))
+            child1.append(copy.deepcopy(route))
+            used_clients1.update(c.id for c in route[1:-1])
+        
+        while len(child2) < self.m and remaining_routes2:
+            route = remaining_routes2.pop(random.randrange(len(remaining_routes2)))
+            child2.append(copy.deepcopy(route))
+            used_clients2.update(c.id for c in route[1:-1])
+        
         return child1, child2
 
-    def mutation(self, solution):
-        """Mutation operator that maintains client uniqueness."""
-        if not solution or random.random() > self.mutation_rate:
+    def _mutation(self, solution):
+        """Apply multiple mutation operators."""
+        if random.random() > self.mutation_rate or not solution:
             return solution
-            
+        
         mutated = copy.deepcopy(solution)
-        route_idx = random.randrange(len(mutated))
-        route = mutated[route_idx]
-        
-        if len(route) <= 3:  # Need at least 2 clients to perform mutation
-            return mutated
-        
-        # Choose mutation type
-        mutation_type = random.choice(['swap', 'reverse', 'shift'])
+        mutation_type = random.choice(['swap', 'reverse', 'relocate'])
         
         if mutation_type == 'swap':
-            # Swap two random clients within the route
-            i, j = random.sample(range(1, len(route)-1), 2)
-            route[i], route[j] = route[j], route[i]
+            # Swap clients between routes
+            if len(mutated) >= 2:
+                route1_idx, route2_idx = random.sample(range(len(mutated)), 2)
+                route1, route2 = mutated[route1_idx], mutated[route2_idx]
+                
+                if len(route1) > 3 and len(route2) > 3:
+                    pos1 = random.randrange(1, len(route1) - 1)
+                    pos2 = random.randrange(1, len(route2) - 1)
+                    route1[pos1], route2[pos2] = route2[pos2], route1[pos1]
         
         elif mutation_type == 'reverse':
-            # Reverse a segment of the route
-            i = random.randrange(1, len(route)-2)
-            j = random.randrange(i+1, len(route)-1)
-            route[i:j+1] = reversed(route[i:j+1])
+            # Reverse segment within route
+            if mutated:
+                route = random.choice(mutated)
+                if len(route) > 4:
+                    i = random.randrange(1, len(route) - 2)
+                    j = random.randrange(i + 1, len(route) - 1)
+                    route[i:j+1] = reversed(route[i:j+1])
         
-        else:  # shift
-            # Shift a client to a new position within the same route
-            old_pos = random.randrange(1, len(route)-1)
-            new_pos = random.randrange(1, len(route)-1)
-            client = route.pop(old_pos)
-            route.insert(new_pos, client)
+        else:  # relocate
+            # Move client to different position
+            if len(mutated) >= 1:
+                route_idx = random.randrange(len(mutated))
+                route = mutated[route_idx]
+                
+                if len(route) > 3:
+                    client_pos = random.randrange(1, len(route) - 1)
+                    client = route.pop(client_pos)
+                    
+                    # Choose new route and position
+                    new_route_idx = random.randrange(len(mutated))
+                    new_route = mutated[new_route_idx]
+                    new_pos = random.randrange(1, len(new_route))
+                    new_route.insert(new_pos, client)
         
         return mutated
 
-    def _adjust_parameters(self):
-        """Adjust genetic parameters based on population diversity."""
-        if self.population_entropy < 0.3:  # Plus strict threshold
-            self.mutation_rate = min(0.8, self.mutation_rate * 1.2)  # More aggressive increase
-            self.crossover_rate = max(0.6, self.crossover_rate * 0.95)
-        elif self.population_entropy > 0.7:  # High diversity
-            self.mutation_rate = max(0.2, self.mutation_rate * 0.9)
-            self.crossover_rate = min(0.95, self.crossover_rate * 1.05)
-        
-        # Adjust based on improvement stagnation
-        if self.generations_without_improvement > self.max_stagnation // 2:
-            self.mutation_rate = min(0.9, self.mutation_rate * 1.3)
-            self.tournament_size = max(2, self.tournament_size - 1)
-        else:
-            self.tournament_size = min(self.population_size // 10, self.tournament_size + 1)
+    def _tournament_selection(self, population, fitnesses):
+        """Tournament selection with diversity consideration."""
+        tournament_indices = random.sample(range(len(population)), self.tournament_size)
+        tournament_fitness = [fitnesses[i] for i in tournament_indices]
+        winner_idx = tournament_indices[tournament_fitness.index(max(tournament_fitness))]
+        return population[winner_idx]
 
     def evolve(self):
-            """Genetic algorithm's main evolution method with statistics tracking."""
-            population = [self._create_initial_solution() 
-                        for _ in range(self.population_size)]
-            
-            # Initialize statistics
-            self.stats_data = {
-                'iteration': [],
-                'best_fitness': [],
-                'avg_fitness': [],
-                'diversity': [],
-                'mutation_rate': [],
-                'crossover_rate': [],
-                'tournament_size': [],
-                'generations_without_improvement': []
-            }
-            
-            for generation in range(self.generations):
-                # Calculate population entropy for diversity metric
-                self.population_entropy = self._calculate_population_diversity(population)
-                
-                # Adjust parameters based on diversity
-                self._adjust_parameters()
-                
-                # Evaluate population
-                population_with_fitness = [(p, self._adaptive_fitness(p)) for p in population]
-                population_with_fitness.sort(key=lambda x: x[1], reverse=True)
-                
-                current_best = population_with_fitness[0]
-                
-                # Update best solution if improved
-                if current_best[1] > self.best_fitness:
-                    self.best_fitness = current_best[1]
-                    self.best_solution = copy.deepcopy(current_best[0])
-                    self.generations_without_improvement = 0
-                else:
-                    self.generations_without_improvement += 1
-                
-                # Collect statistics
-                self.stats_data['iteration'].append(generation)
-                self.stats_data['best_fitness'].append(self.best_fitness)
-                self.stats_data['avg_fitness'].append(
-                    statistics.mean([f for _, f in population_with_fitness]))
-                self.stats_data['diversity'].append(self.population_entropy)
-                self.stats_data['mutation_rate'].append(self.mutation_rate)
-                self.stats_data['crossover_rate'].append(self.crossover_rate)
-                self.stats_data['tournament_size'].append(self.tournament_size)
-                self.stats_data['generations_without_improvement'].append(
-                    self.generations_without_improvement)
-                
-                # Debug printing if enabled
-                if self.debug and generation % 10 == 0:
-                    print(f"Generation {generation}:")
-                    print(f"  Best Fitness = {self.best_fitness:.2f}")
-                    print(f"  Diversity = {self.population_entropy:.3f}")
-                    print(f"  Mutation Rate = {self.mutation_rate:.3f}")
-                    print(f"  Crossover Rate = {self.crossover_rate:.3f}")
-                    print(f"  Tournament Size = {self.tournament_size}")
-                
-                # Early stopping check
-                if (self.generations_without_improvement > self.max_stagnation and
-                    generation > self.generations // 4):
-                    if self.debug:
-                        print(f"\nEarly stopping at generation {generation}")
-                        print(f"No improvement for {self.generations_without_improvement} generations")
-                    break
-                
-                # Create new population
-                new_population = []
-                
-                # Elitism
-                for solution, fitness in population_with_fitness:
-                    if len(new_population) >= self.elite_size:
-                        break
-                    is_diverse = True
-                    for added in new_population:
-                        if self._calculate_route_diversity(solution[0], added[0]) < 0.3:
-                            is_diverse = False
-                            break
-                    if is_diverse:
-                        new_population.append(copy.deepcopy(solution))
-                
-                # Generate rest of population
-                while len(new_population) < self.population_size:
-                    parent1 = self._diverse_tournament_select(population_with_fitness)
-                    parent2 = self._diverse_tournament_select(population_with_fitness, exclude=parent1)
-                    
-                    child1, child2 = self.crossover(parent1, parent2)
-                    child1 = self.mutation(child1)
-                    child2 = self.mutation(child2)
-                    
-                    for child in [child1, child2]:
-                        if len(new_population) < self.population_size and child:
-                            new_population.append(child)
-                
-                population = new_population
-            
-            return self.best_solution
-    def _diverse_tournament_select(self, population_with_fitness, exclude=None):
-        """Tournament selection that considers both fitness and diversity."""
-        tournament_size = min(self.tournament_size, len(population_with_fitness))
-        tournament = random.sample(population_with_fitness, tournament_size)
+        """Main evolutionary process."""
+        # Initialize population
+        population = [self._create_initial_solution() for _ in range(self.population_size)]
         
-        if exclude:
-            # Add diversity score to tournament candidates
-            tournament_with_diversity = []
-            for solution, fitness in tournament:
-                diversity = self._calculate_route_diversity(solution[0], exclude[0])
-                # Combine fitness and diversity into score
-                score = fitness * (1 + diversity)
-                tournament_with_diversity.append((solution, score))
+        for generation in range(self.generations):
+            # Evaluate population
+            fitnesses = [self._evaluate_solution(solution) for solution in population]
             
-            # Select based on combined score
-            return max(tournament_with_diversity, key=lambda x: x[1])[0]
+            # Update best solution
+            max_fitness_idx = fitnesses.index(max(fitnesses))
+            if fitnesses[max_fitness_idx] > self.best_fitness:
+                self.best_fitness = fitnesses[max_fitness_idx]
+                self.best_solution = copy.deepcopy(population[max_fitness_idx])
+                self.generations_without_improvement = 0
+            else:
+                self.generations_without_improvement += 1
+            
+            # Collect statistics
+            self.stats_data['iteration'].append(generation)
+            self.stats_data['best_fitness'].append(self.best_fitness)
+            self.stats_data['avg_fitness'].append(sum(fitnesses) / len(fitnesses))
+            self.stats_data['diversity'].append(len(set(tuple(str(s)) for s in population)) / self.population_size)
+            self.stats_data['mutation_rate'].append(self.mutation_rate)
+            self.stats_data['crossover_rate'].append(self.crossover_rate)
+            self.stats_data['tournament_size'].append(self.tournament_size)
+            self.stats_data['generations_without_improvement'].append(self.generations_without_improvement)
+            
+            # Debug output
+            if self.debug and generation % 10 == 0:
+                print(f"Generation {generation}:")
+                print(f"  Best Fitness = {self.best_fitness:.2f}")
+                print(f"  Average Fitness = {sum(fitnesses) / len(fitnesses):.2f}")
+                print(f"  Diversity = {self.stats_data['diversity'][-1]:.3f}")
+            
+            # Check for early stopping
+            if (self.generations_without_improvement > self.max_stagnation and 
+                generation > self.generations // 4):
+                if self.debug:
+                    print(f"\nEarly stopping at generation {generation}")
+                    print(f"No improvement for {self.generations_without_improvement} generations")
+                break
+            
+            # Create new population
+            new_population = []
+            
+            # Elitism
+            sorted_indices = sorted(range(len(fitnesses)), key=lambda k: fitnesses[k], reverse=True)
+            for i in range(self.elite_size):
+                new_population.append(copy.deepcopy(population[sorted_indices[i]]))
+            
+            # Generate offspring
+            while len(new_population) < self.population_size:
+                parent1 = self._tournament_selection(population, fitnesses)
+                parent2 = self._tournament_selection(population, fitnesses)
+                child1, child2 = self._crossover(parent1, parent2)
+                
+                child1 = self._mutation(child1)
+                child2 = self._mutation(child2)
+                
+                new_population.append(child1)
+                if len(new_population) < self.population_size:
+                    new_population.append(child2)
+            
+            population = new_population
         
-        # If no exclusion, select based on fitness
-        return max(tournament, key=lambda x: x[1])[0]
+        return self.best_solution
 
     def get_stats(self):
         """Return collected statistics as a pandas DataFrame."""
@@ -1250,7 +1159,7 @@ def main(instance_file, debug=False):
     start_point, end_point, clients, m, L = lire_instance_chao(instance_file)
 
     # Extract instance size from filename
-    instance_name = f"{instance_file.split('/')[-1].replace('.txt', '')}_m{m}_L{L}"
+    instance_name = f"{instance_file.split('/')[-1].replace('.txt', '')}_{m}_{L}"
     
     # Create output directory with instance size
     output_dir = f'results_{instance_name}'
@@ -1258,9 +1167,9 @@ def main(instance_file, debug=False):
     
     # Run algorithms and collect results
     algorithms = [
-        ('GreedyTOP', GreedyTOP(start_point, end_point, clients, m, L, debug=debug)),
-        ('SimulatedAnnealingTOP', SimulatedAnnealingTOP(start_point, end_point, clients, m, L, debug=debug)),
-        ('AntColonyTOP', AntColonyTOP(start_point, end_point, clients, m, L, debug=debug)),
+        # ('GreedyTOP', GreedyTOP(start_point, end_point, clients, m, L, debug=debug)),
+        # ('SimulatedAnnealingTOP', SimulatedAnnealingTOP(start_point, end_point, clients, m, L, debug=debug)),
+        # ('AntColonyTOP', AntColonyTOP(start_point, end_point, clients, m, L, debug=debug)),
         ('GeneticTOP', GeneticTOP(start_point, end_point, clients, m, L, debug=debug))
     ]
     
@@ -1422,7 +1331,7 @@ if __name__ == "__main__":
         # main_for_all_instances("set_64_1/*.txt", debug=True)
         # main_for_all_instances("set_66_1/*.txt", debug=True)
         # main("set_64_1/set_64_1_60.txt", debug=True)
-        main("set_64_234/p6.2.a.txt", debug=True)
+        main("set_100_234/p4.3.m.txt", debug=True)
         # main("set_64_1/set_64_1_30.txt", debug=True)
 
 
