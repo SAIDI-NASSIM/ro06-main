@@ -12,7 +12,7 @@ import itertools
 from dataclasses import dataclass
 from typing import List, Set, Dict, Tuple
 import os 
-import glob
+import glob 
 
 
 class Client:
