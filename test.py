@@ -22,21 +22,6 @@ class Client:
         self.y = y
         self.profit = profit
 
-def distance(client1, client2):
-    return math.sqrt((client1.x - client2.x) ** 2 + (client1.y - client2.y) ** 2)
-
-def temps_total(route):
-    return sum(distance(route[i], route[i + 1]) for i in range(len(route) - 1))
-
-def profit_total(route):
-    return sum(client.profit for client in route[1:-1])
-
-def profit_incremental(route, client, position):
-    if position == 0 or position == len(route):
-        return -float("inf")
-    cout_additionnel = (distance(route[position - 1], client) + distance(client, route[position]) - distance(route[position - 1], route[position]))
-    return client.profit - cout_additionnel
-
 
 
 class GreedyTOP:
@@ -330,30 +315,30 @@ class SimulatedAnnealingTOP:
         coverage_bonus = total_profit * coverage_ratio * 0.1
         
         return max(0, total_profit - time_penalty - balance_penalty + coverage_bonus)
-    
+
     def _generate_neighbor(self, solution):
-        """Generate neighboring solution using various operators."""
+        """Generate neighboring solution that maintains client uniqueness."""
         neighbor = copy.deepcopy(solution)
         if not neighbor:
             return neighbor
-            
+                
         # Select random operation
         operation = random.choice(['swap', 'insert', 'reverse', 'exchange'])
         
         if operation == 'swap':
-            # Swap two random clients within a route
+            # Swap two random clients within a route (maintains uniqueness)
             route_idx = random.randrange(len(neighbor))
             route = neighbor[route_idx]
-            if len(route) > 3:
+            if len(route) > 3:  # Need at least 2 clients to swap
                 i, j = random.sample(range(1, len(route)-1), 2)
                 route[i], route[j] = route[j], route[i]
         
         elif operation == 'insert':
-            # Move a client to a new position
+            # Move a client to a new position (maintains uniqueness as just moving)
             if len(neighbor) > 1:
                 route1_idx = random.randrange(len(neighbor))
                 route1 = neighbor[route1_idx]
-                if len(route1) > 3:
+                if len(route1) > 3:  # Need at least one client to move
                     client_idx = random.randrange(1, len(route1)-1)
                     client = route1.pop(client_idx)
                     
@@ -361,9 +346,13 @@ class SimulatedAnnealingTOP:
                     route2 = neighbor[route2_idx]
                     insert_pos = random.randrange(1, len(route2))
                     route2.insert(insert_pos, client)
+                    
+                    # Remove empty routes
+                    if len(route1) <= 2:
+                        neighbor.remove(route1)
         
         elif operation == 'reverse':
-            # Reverse a segment within a route
+            # Reverse a segment within a route (maintains uniqueness)
             route_idx = random.randrange(len(neighbor))
             route = neighbor[route_idx]
             if len(route) > 4:
@@ -372,7 +361,7 @@ class SimulatedAnnealingTOP:
                 route[i:j+1] = reversed(route[i:j+1])
         
         else:  # exchange
-            # Exchange segments between routes
+            # Exchange single clients between routes (maintains uniqueness)
             if len(neighbor) > 1:
                 i, j = random.sample(range(len(neighbor)), 2)
                 route1, route2 = neighbor[i], neighbor[j]
@@ -912,82 +901,93 @@ class GeneticTOP:
                 + efficiency_bonus)
         
         return max(0, fitness)
+    
     def crossover(self, parent1, parent2):
+        """Crossover operator that maintains client uniqueness."""
         if not parent1 or not parent2 or random.random() > self.crossover_rate:
             return copy.deepcopy(parent1), copy.deepcopy(parent2)
             
         child1, child2 = [], []
         used_clients1, used_clients2 = set(), set()
         
-        # Determine crossover points adaptively
+        # Determine crossover points
         max_routes = max(len(parent1), len(parent2))
-        crossover_points = sorted(random.sample(range(max_routes), 
-                                min(2, max_routes)))
-        
-        if len(crossover_points) < 2:
+        if max_routes < 2:
             return copy.deepcopy(parent1), copy.deepcopy(parent2)
             
-        start, end = crossover_points
+        start = random.randrange(max_routes)
+        end = random.randrange(start + 1, max_routes + 1)
         
-        # Preserve route segments between crossover points
+        # First phase: Copy selected routes from parents if their clients haven't been used
         for i in range(start, end):
+            # For child1: inherit from parent1
             if i < len(parent1):
-                new_route = self._extract_valid_clients(parent1[i], used_clients1)
-                if len(new_route) > 2:
-                    child1.append(new_route)
-                    used_clients1.update(c.id for c in new_route[1:-1])
-                    
+                route = parent1[i]
+                route_clients = set(c.id for c in route[1:-1])
+                if not (route_clients & used_clients1):
+                    child1.append(copy.deepcopy(route))
+                    used_clients1.update(route_clients)
+            
+            # For child2: inherit from parent2
             if i < len(parent2):
-                new_route = self._extract_valid_clients(parent2[i], used_clients2)
-                if len(new_route) > 2:
-                    child2.append(new_route)
-                    used_clients2.update(c.id for c in new_route[1:-1])
+                route = parent2[i]
+                route_clients = set(c.id for c in route[1:-1])
+                if not (route_clients & used_clients2):
+                    child2.append(copy.deepcopy(route))
+                    used_clients2.update(route_clients)
         
-        # Complete children with remaining feasible routes
+        # Second phase: Try to add remaining routes from opposite parent
         remaining_routes1 = (parent2[:start] + parent2[end:] if start < len(parent2) else [])
         remaining_routes2 = (parent1[:start] + parent1[end:] if start < len(parent1) else [])
         
         for route in remaining_routes1:
-            new_route = self._extract_valid_clients(route, used_clients1)
-            if len(new_route) > 2:
-                child1.append(new_route)
-                used_clients1.update(c.id for c in new_route[1:-1])
-                
+            route_clients = set(c.id for c in route[1:-1])
+            if not (route_clients & used_clients1) and len(child1) < self.m:
+                child1.append(copy.deepcopy(route))
+                used_clients1.update(route_clients)
+        
         for route in remaining_routes2:
-            new_route = self._extract_valid_clients(route, used_clients2)
-            if len(new_route) > 2:
-                child2.append(new_route)
-                used_clients2.update(c.id for c in new_route[1:-1])
+            route_clients = set(c.id for c in route[1:-1])
+            if not (route_clients & used_clients2) and len(child2) < self.m:
+                child2.append(copy.deepcopy(route))
+                used_clients2.update(route_clients)
         
         return child1, child2
 
     def mutation(self, solution):
+        """Mutation operator that maintains client uniqueness."""
         if not solution or random.random() > self.mutation_rate:
             return solution
             
         mutated = copy.deepcopy(solution)
-        route = mutated[0]  # Pour m=1
+        route_idx = random.randrange(len(mutated))
+        route = mutated[route_idx]
         
-        # Sélectionner plusieurs clients à réorganiser
-        internal_points = route[1:-1]
-        if len(internal_points) <= 2:
+        if len(route) <= 3:  # Need at least 2 clients to perform mutation
             return mutated
-            
-        # Choisir entre 2 et 4 points à permuter
-        k = random.randint(2, min(4, len(internal_points)))
-        positions = random.sample(range(len(internal_points)), k)
         
-        # Permuter les points sélectionnés
-        for i, j in itertools.combinations(positions, 2):
-            internal_points[i], internal_points[j] = internal_points[j], internal_points[i]
+        # Choose mutation type
+        mutation_type = random.choice(['swap', 'reverse', 'shift'])
         
-        new_route = [route[0]] + internal_points + [route[-1]]
+        if mutation_type == 'swap':
+            # Swap two random clients within the route
+            i, j = random.sample(range(1, len(route)-1), 2)
+            route[i], route[j] = route[j], route[i]
         
-        # Vérifier si la nouvelle route est valide
-        if self.is_valid_route(new_route):
-            mutated[0] = new_route
-            return mutated
-        return solution  # Retourner solution originale si mutation invalide
+        elif mutation_type == 'reverse':
+            # Reverse a segment of the route
+            i = random.randrange(1, len(route)-2)
+            j = random.randrange(i+1, len(route)-1)
+            route[i:j+1] = reversed(route[i:j+1])
+        
+        else:  # shift
+            # Shift a client to a new position within the same route
+            old_pos = random.randrange(1, len(route)-1)
+            new_pos = random.randrange(1, len(route)-1)
+            client = route.pop(old_pos)
+            route.insert(new_pos, client)
+        
+        return mutated
 
     def _adjust_parameters(self):
         """Adjust genetic parameters based on population diversity."""
@@ -1122,78 +1122,7 @@ class GeneticTOP:
         
         # If no exclusion, select based on fitness
         return max(tournament, key=lambda x: x[1])[0]
-    def _extract_valid_clients(self, route, used_clients):
-        """Extract valid clients from a route that haven't been used."""
-        if not route or len(route) <= 2:
-            return [self.start_point, self.end_point]
-            
-        new_route = [self.start_point]
-        current_time = 0
-        
-        for client in route[1:-1]:
-            if client.id not in used_clients:
-                new_time = (current_time + 
-                           self.get_distance(new_route[-1], client) + 
-                           self.get_distance(client, self.end_point))
-                if new_time <= self.L:
-                    new_route.append(client)
-                    current_time += self.get_distance(new_route[-2], client)
-        
-        new_route.append(self.end_point)
-        return new_route
 
-    def is_valid_route(self, route):
-        """Check if a route is valid according to time constraints."""
-        if not route or len(route) < 2:
-            return False
-            
-        total_time = sum(self.get_distance(route[i], route[i+1]) 
-                        for i in range(len(route)-1))
-        return total_time <= self.L
-    
-    def _print_iteration_stats(self, generation: int) -> None:
-        if generation % 10 == 0:
-            print(f"\nIteration {generation}:")
-            print(f"  Best Fitness: {self.best_fitness:.2f}")
-            
-            current_fitnesses = [self._adaptive_fitness(solution) for solution in self.population]
-            print(f"  Average Fitness: {statistics.mean(current_fitnesses):.2f}")
-            print(f"  Population Diversity: {self.population_entropy:.3f}")
-            print(f"  Parameters - Mutation: {self.mutation_rate:.3f}, "
-                f"Crossover: {self.crossover_rate:.3f}, "
-                f"Tournament: {self.tournament_size}")
-
-    def _print_final_stats(self) -> None:
-        print("\n" + "="*50)
-        print("Final Statistics:")
-        print("="*50)
-        print(f"Total Iterations: {len(self.diversity_history)}")
-        print(f"Best Solution Fitness: {self.best_fitness:.2f}")
-        print(f"Final Diversity: {self.population_entropy:.3f}")
-        
-        if self.best_solution:
-            total_profit = sum(sum(c.profit for c in route[1:-1]) 
-                            for route in self.best_solution)
-            total_clients = sum(len(route)-2 for route in self.best_solution)
-            total_time = sum(sum(self.get_distance(route[i], route[i+1])
-                            for i in range(len(route)-1))
-                        for route in self.best_solution)
-            
-            print(f"\nBest Solution Details:")
-            print(f"Total Profit: {total_profit}")
-            print(f"Total Clients Served: {total_clients}")
-            print(f"Average Clients per Route: {total_clients/len(self.best_solution):.2f}")
-            print(f"Total Time: {total_time:.2f}")
-            
-            print("\nRoute Details:")
-            for i, route in enumerate(self.best_solution):
-                route_profit = sum(c.profit for c in route[1:-1])
-                route_time = sum(self.get_distance(route[i], route[i+1])
-                            for i in range(len(route)-1))
-                print(f"\nRoute {i+1}:")
-                print(f"  Clients: {len(route)-2}")
-                print(f"  Profit: {route_profit}")
-                print(f"  Time: {route_time:.2f}")
     def get_stats(self):
         """Return collected statistics as a pandas DataFrame."""
         return pd.DataFrame(self.stats_data)
@@ -1202,13 +1131,19 @@ class GeneticTOP:
 
 def lire_instance_chao(nom_fichier):
     with open(nom_fichier, "r") as f:
-        lignes = f.readlines()
-    L, m = map(float, lignes[0].split())
+        lines = f.readlines()
+        
+    # Read m and tmax from second and third line
+    m = int(lines[1].split()[1])  # gets P value
+    L = float(lines[2].split()[1])  # gets Tmax value
+    
+    # Read points (skip first 3 header lines)
     points = []
-    for i, ligne in enumerate(lignes[1:], 1):
-        x, y, profit = map(float, ligne.split())
-        points.append(Client(i-1, x, y, profit))
-    return points[0], points[1], points[2:], int(m), L
+    for i, line in enumerate(lines[3:], 0):  # start index at 0
+        x, y, score = map(float, line.split())
+        points.append(Client(i, x, y, score))  # i is the ID
+    
+    return points[0], points[-1], points[1:-1], m, L  # start, end, clients, m, L
 
 def visualize_solution(solution, start_point, end_point, clients, filename):
     plt.figure(figsize=(12, 8))
@@ -1311,14 +1246,14 @@ def plot_algorithm_stats(stats_data, algorithm_name, output_dir):
 
 
 def main(instance_file, debug=False):
-    # Extract instance size from filename
-    instance_size = instance_file.split('_')[-1].replace('.txt', '')
-    
     # Read instance
     start_point, end_point, clients, m, L = lire_instance_chao(instance_file)
+
+    # Extract instance size from filename
+    instance_name = f"{instance_file.split('/')[-1].replace('.txt', '')}_m{m}_L{L}"
     
     # Create output directory with instance size
-    output_dir = f'algorithm_results_{instance_size}'
+    output_dir = f'results_{instance_name}'
     os.makedirs(output_dir, exist_ok=True)
     
     # Run algorithms and collect results
@@ -1347,7 +1282,7 @@ def main(instance_file, debug=False):
         stats_df = stats_df[stats_df['iteration'] % 10 == 0].copy()
         
         # Add instance information
-        stats_df['Instance_Size'] = instance_size
+        stats_df['Instance_Size'] = L
         stats_df['Instance_File'] = instance_file
         stats_df['Timestamp'] = time.strftime('%Y-%m-%d %H:%M:%S')
         
@@ -1422,7 +1357,7 @@ def main(instance_file, debug=False):
         
         # Store results for overall history
         results.append({
-            'Instance_Size': instance_size,
+            'Instance_Size': L,
             'Algorithm': name,
             'Execution_Time': execution_time,
             'Final_Fitness': algorithm.best_fitness,
@@ -1487,7 +1422,7 @@ if __name__ == "__main__":
         # main_for_all_instances("set_64_1/*.txt", debug=True)
         # main_for_all_instances("set_66_1/*.txt", debug=True)
         # main("set_64_1/set_64_1_60.txt", debug=True)
-        main("set_64_1/set_64_1_80.txt", debug=True)
+        main("set_64_234/p6.2.a.txt", debug=True)
         # main("set_64_1/set_64_1_30.txt", debug=True)
 
 
