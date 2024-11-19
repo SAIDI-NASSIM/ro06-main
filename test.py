@@ -1167,9 +1167,9 @@ def main(instance_file, debug=False):
     
     # Run algorithms and collect results
     algorithms = [
-        # ('GreedyTOP', GreedyTOP(start_point, end_point, clients, m, L, debug=debug)),
-        # ('SimulatedAnnealingTOP', SimulatedAnnealingTOP(start_point, end_point, clients, m, L, debug=debug)),
-        # ('AntColonyTOP', AntColonyTOP(start_point, end_point, clients, m, L, debug=debug)),
+        ('GreedyTOP', GreedyTOP(start_point, end_point, clients, m, L, debug=debug)),
+        ('SimulatedAnnealingTOP', SimulatedAnnealingTOP(start_point, end_point, clients, m, L, debug=debug)),
+        ('AntColonyTOP', AntColonyTOP(start_point, end_point, clients, m, L, debug=debug)),
         ('GeneticTOP', GeneticTOP(start_point, end_point, clients, m, L, debug=debug))
     ]
     
@@ -1328,12 +1328,7 @@ def main_for_all_instances(folder_pattern, debug=False):
             main(instance_file, debug)
 
 if __name__ == "__main__":
-        # main_for_all_instances("set_64_1/*.txt", debug=True)
-        # main_for_all_instances("set_66_1/*.txt", debug=True)
-        # main("set_64_1/set_64_1_60.txt", debug=True)
         main("set_100_234/p4.3.m.txt", debug=True)
-        # main("set_64_1/set_64_1_30.txt", debug=True)
-
 
 
 
