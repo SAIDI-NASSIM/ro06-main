@@ -1241,15 +1241,15 @@ def run_benchmark(instance_sets, run_symmetric=True, run_non_symmetric=True, deb
 
 if __name__ == "__main__":
     instance_sets = {
-        "symmetric": {
-            "small": ["Set_64_234/p6.2.d.txt", "Set_64_234/p6.2.i.txt", "Set_64_234/p6.2.n.txt"],
-            "medium": ["Set_64_234/p6.3.d.txt", "Set_64_234/p6.3.i.txt", "Set_64_234/p6.3.n.txt"],
-            "large": ["Set_64_234/p6.4.d.txt", "Set_64_234/p6.4.i.txt", "Set_64_234/p6.4.n.txt"]
-        },
         "non_symmetric": {
-            "small": ["Set_100_234/p4.2.a.txt", "Set_100_234/p4.2.j.txt", "Set_100_234/p4.2.t.txt"],
-            "medium": ["Set_100_234/p4.3.a.txt", "Set_100_234/p4.3.j.txt", "Set_100_234/p4.3.t.txt"],
-            "large": ["Set_100_234/p4.4.a.txt", "Set_100_234/p4.4.j.txt", "Set_100_234/p4.4.t.txt"]
+            "small": ["Set_100_234/p4.2.a.txt", "Set_100_234/p4.3.d.txt", "Set_100_234/p4.4.e.txt"],
+            "medium": ["Set_100_234/p4.2.j.txt", "Set_100_234/p4.3.j.txt", "Set_100_234/p4.4.m.txt"],
+            "high": ["Set_100_234/p4.2.t.txt", "Set_100_234/p4.3.t.txt", "Set_100_234/p4.4.t.txt"]
+        },
+        "symmetric": {
+            "small": ["Set_64_234/p6.2.d.txt", "Set_64_234/p6.3.g.txt", "Set_64_234/p6.4.j.txt"],
+            "medium": ["Set_64_234/p6.2.j.txt", "Set_64_234/p6.3.i.txt", "Set_64_234/p6.4.l.txt"],
+            "high": ["Set_64_234/p6.2.n.txt", "Set_64_234/p6.3.n.txt", "Set_64_234/p6.4.n.txt"]
         }
     }
     

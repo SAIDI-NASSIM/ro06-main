@@ -1,0 +1,2 @@
+Execution_Time,Best_Fitness,Total_Profit,Unique_Clients_Visited,Total_Available_Clients,Coverage_Ratio,Number_of_Routes,Routes_Exceeding_TimeLimit,Avg_Route_Time,Route_Time_Std,Time_Efficiency,Constraints_Respected,Algorithm,Instance,Timestamp
+4.9283764362335205,192.51275036531476,186.0,14,62,0.22580645161290322,2,0,14.828427124746192,1.2560739669470201e-15,0.011438191683587173,True,AntColony,p6.2.d,2024-11-19 22:08:05
